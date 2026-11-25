@@ -1,0 +1,13 @@
+Archive validation, 2026-11-25
+
+Portable notebooks: 3 passed.
+Helper safety checks: 6 passed.
+Copied source/data files checked against source receipts: 16014.
+Completed API downloads checked: 99 (126,479,683 bytes).
+Notebook documents validated: 59.
+Download plan: 26 dataset groups, dry-run checked without SSH connections.
+Absolute energy MAE/P10/P90/max match the saved paper statistics for all 36 table rows.
+All Git-eligible files are below 8 MB; array, JSON, SMILES, checkpoint and compressed data are ignored.
+Executed original notebooks are retained under data/executed_notebooks before clearing outputs in Git-facing copies.
+The original project and scientific package checkouts were not changed. No Git commit or push was made.
+Remote sources still requiring transfer and the two missing sample caches are described in DATASETS.md.

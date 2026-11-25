@@ -1,0 +1,22 @@
+Unapplied McUtils draft: missing axis-scale methods in MPLAxes
+
+Observed during native McUtils rendering on ARM Python 3.11. The public call
+    panel.scale = ('linear', 'log')
+raises AttributeError: 'MPLAxes' object has no attribute 'get_xscale'.
+
+Graphics.py:1930 delegates to GraphicsPropertyManager.scale. Its setter at
+Properties.py:1002 reads axes.get_xscale()/get_yscale(), then uses
+axes.set_xscale()/set_yscale(). The MPLAxes wrapper in Backends.py exposes
+none of these four methods. It wraps the native Matplotlib axes as self.obj.
+
+The targeted draft adds the four direct backend delegations, beside the
+existing autoscale delegations. It changes no property semantics and applies
+only to the Matplotlib backend. Other backend scale support is outside this
+draft's scope. No package source was changed and no runtime monkey patch or
+adapter was used. The delivered scientific figures use linear BCE axes.
+The draft passes git apply --check against the inspected native source;
+this checks applicability only, and the change has not been applied or run.
+
+Suggested validation after human review: create a native Plot, set
+scale=('linear','log'), confirm y-axis log scaling; then return to linear.
+Test x-axis logarithmic scaling and backend keyword options as appropriate.

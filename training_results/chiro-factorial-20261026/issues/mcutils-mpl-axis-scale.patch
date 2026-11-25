@@ -1,0 +1,19 @@
+diff --git a/McUtils/Plots/Backends.py b/McUtils/Plots/Backends.py
+--- a/McUtils/Plots/Backends.py
++++ b/McUtils/Plots/Backends.py
+@@ -2201,6 +2201,15 @@ class MPLAxes(GraphicsAxes):
+     def set_autoscale_on(self, is_on):
+         return self.obj.set_autoscale_on(is_on)
+ 
++    def get_xscale(self):
++        return self.obj.get_xscale()
++    def set_xscale(self, scale, **opts):
++        return self.obj.set_xscale(scale, **opts)
++    def get_yscale(self):
++        return self.obj.get_yscale()
++    def set_yscale(self, scale, **opts):
++        return self.obj.set_yscale(scale, **opts)
++
+     def get_xlabel(self):
+         """
+         **LLM Docstring**

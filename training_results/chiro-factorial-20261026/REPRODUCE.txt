@@ -1,0 +1,23 @@
+Reproducing the figures and analysis
+
+All scientific plots use native McUtils. No model fitting or checkpoint reselection occurs here.
+Use a Python environment containing NumPy, matplotlib and native McUtils. On this Mac:
+
+PYTHON=/Users/Mark/Documents/Postdoc/Development/.codex/envs/python3.11-codex/bin/python
+MCUTILS=/Users/Mark/Documents/UW/Research/Development/McUtils
+cd <this artifact directory>
+
+/usr/bin/arch -arm64 "$PYTHON" -B analyze_conditions.py --root .
+/usr/bin/arch -arm64 "$PYTHON" -B plot_pool.py --root . --snapshot analysis/snapshots/snapshot-709d09ec5eb0812baed37c2b --mcutils-source "$MCUTILS"
+/usr/bin/arch -arm64 "$PYTHON" -B factor_plots.py --inputs analysis/snapshots/snapshot-709d09ec5eb0812baed37c2b --output factor-figures --mcutils-source "$MCUTILS"
+/usr/bin/arch -arm64 "$PYTHON" -B convergence_plots.py --inputs analysis/snapshots/snapshot-709d09ec5eb0812baed37c2b --output convergence-figures --mcutils-source "$MCUTILS"
+/usr/bin/arch -arm64 "$PYTHON" -B build_report.py
+
+The scripts put all plotting caches in this output directory. Scientific package sources,
+training files, model weights and source data are not edited. The full nine-file snapshot
+is included and verified by its original SHA-256 manifest. Supplemental plotted-value JSONs
+preserve every mean, SD and individual-seed value behind the error bars.
+
+Uncertainty: sample SD across three training seeds, or across three paired seed differences.
+The balanced design-effect table first averages backgrounds within seed; its SD has n=3,
+not 16/24 factorial cells and not 69,719 conformers. No formal significance/equivalence test.

@@ -1,0 +1,16 @@
+# Figure/table notebooks. Use campaign lockfiles for training or MLIP inference.
+numpy>=1.26,<3
+scipy>=1.12
+matplotlib>=3.8
+pandas>=2.2
+sympy
+numba
+zarr>=2.17,<3
+h5py
+rdkit
+Pillow
+cairosvg
+nbformat>=5.10
+nbclient
+jupyterlab
+ipykernel

@@ -1,0 +1,5 @@
+package	commit	dirty	origin	destination	source
+optimal-conformer-encodings	c23bb8a464d9eb926ba7f985f189310e0ac1a533	True	https://github.com/Tabor-Research-Group/optimal-conformer-encodings.git	software/ocen	/Users/Mark/Documents/Postdoc/Projects/Encoding/optimal-conformer-encodings
+ChIRo	2686d3a1801db8fb3dec10b61fb0cb0cec047c7c	True	https://github.com/keiradams/ChIRo.git	software/ChIRo	/Users/Mark/Documents/Postdoc/Projects/Encoding/ChIRo
+McUtils	3021cfd6e939c884e4ff619f5704457359133546	True	https://github.com/McCoyGroup/McUtils.git	software/McUtils	/Users/Mark/Documents/UW/Research/Development/McUtils
+Psience	53e45b341cedebe9781c5a7585b99d16c32696b6	True	https://github.com/McCoyGroup/Psience.git	software/Psience	/Users/Mark/Documents/UW/Research/Development/Psience

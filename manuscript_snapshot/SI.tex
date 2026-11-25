@@ -1,0 +1,1383 @@
+\documentclass[%
+ preprint,
+superscriptaddress,
+%groupedaddress,
+%unsortedaddress,
+%runinaddress,
+%frontmatterverbose, 
+%preprint,
+%preprintnumbers,
+%nofootinbib,
+%nobibnotes,
+%bibnotes,
+ amsmath,amssymb,
+ aip,
+ jcp,
+%pra,
+%prb,
+%rmp,
+%prstab,
+%prstper,
+%floatfix,
+]{revtex4-2}
+
+\input{si_config}
+
+\begin{document}
+\title{
+SUPPORTING INFORMATION FOR: An Optimal Conformer Encoding and Geometric Fingerprint for Structure-Supplemented Molecular Databases
+}
+\date{\today}
+
+\maketitle
+
+
+\section{Geometry Storage Accounting}
+\label{sec:geometry_storage}
+
+For a given molecule or set of atoms, a $Z$-matrix describes a conformer by distances, bond angles, and torsions.
+For $N\geq3$ atoms, storing three 64-bit Cartesian coordinates per atom requires $24N$ bytes.
+A complete 16-bit internal-coordinate representation with $3N-6$ internal coordinates, this requires $6N-12$ bytes. 
+Packing angle--dihedral pairs into 8-bit structures reduces this to $4N-6$ bytes.
+This packed representation occupies less than one sixth of the naieve Cartesian encoding.
+
+We use the GEOM drugs dataset, containing 304,348 molecules, 31,256,395 conformers, and occupying $\ge$50.1 gigabytes.\cite{GEOM}
+This dataset includes metadata, and file-format overhead as well as coordinates and SMILES strings, but also is partially compressed.
+% Earlier Results drafts estimated about 52 GB for GEOM and around ninefold total compression.
+% TODO: Verify aggregate archive byte counts before reporting a total compression factor, graph-storage savings, or final database size.
+
+\subsection{Related Representations and Comparison Scope}
+
+CSMILES and ConfSeq are close precedents for readable, SMILES-associated conformational descriptions.\cite{Furness2025CSMILES,Xiong2026ConfSeq}
+Mol-StrucTok uses topology-derived local distances, angles, and torsions with a learned discrete alphabet; Lingo3DMol combines graph-derived local coordinates with global coordinates for generation.\cite{Gao2024MolStrucTok,Feng2024Lingo3DMol}
+Alternative sequences include Geo2Seq's canonical global spherical coordinates and Token-Mol's SMILES-associated torsion tokens.\cite{Li2025Geo2Seq,Wang2025TokenMol}
+Foldcomp also uses internal coordinates for protein structure storage, together with Cartesian anchors that limit accumulated reconstruction error.\cite{Kim2023:Foldcomp}
+Different representations are targeted to different scientific problems, and so store vary in the geometric quantities they store and which they infer during decoding.
+Storage and reconstruction accuracy therefore depend on the atom set, treatment of hydrogens, graph and model overhead, and any subsequent geometry relaxation.
+
+\section{Conformer Reconstruction and Torsion Screening}
+\label{sec:reconstruction_methods}
+
+Bond lengths and valence angles describe local molecular geometry; torsions specify the relative orientation of successive groups.
+We measure these local quantities alongside aligned Cartesian RMSD to distinguish changes in local geometry from changes in overall shape.
+Near a linear group, a poorly defined torsion can change greatly with little atomic motion.
+
+\subsection{Local Geometry and Overall Shape}
+
+For reference coordinates $\mathbf{x}$ and reconstructed coordinates $\mathbf{y}$, aligned RMSD is
+\begin{equation}
+    \mathrm{RMSD}=\min_{\substack{Q\in\mathrm{SO}(3)\\\mathbf{t}\in\mathbb{R}^3}}
+    \left[\frac{1}{N}\sum_{i=1}^{N}
+    \left\lVert Q\mathbf{y}_i+\mathbf{t}-\mathbf{x}_i\right\rVert^2\right]^{1/2}.
+    \label{eq:reconstruction_rmsd}
+\end{equation}
+We use standard realignment to compare RMSDs.\cite{Kabsch1978ProperRotation}
+The eMolecules comparison uses heavy atoms; the GEOM comparison includes all atoms.
+All distances and RMSDs are reported in \AA.
+
+Local errors are measured for each bond, each angle between adjacent bonds, and each four-atom torsion in the molecular graph.
+Torsions are independent of atom order ($\tau_{i j k l} = \tau_{l k j i}$), and angular differences are measured modulo $360^\circ$.
+For each conformer we calculate the mean absolute error over its local coordinates, then average these means over conformers.
+Reported maxima are the largest individual errors.
+Because the number of retained conformers varies between molecules, Table~\ref{tab:distinct_weighting} also gives RMSDs averaged first within each molecule and then over molecules.
+The XYZ torsion statistics use the exclusions defined below; every conformer retains at least one torsion at each precision.
+The other statistics use all 747,974 retained conformers.
+
+\subsection{Why Near-Linear Torsions Need a Screen}
+
+A dihedral angle is determined by the normals to two planes defined by four atoms.
+As three atoms in either plane approach collinearity, small coordinate perturbations can cause large changes in the direction of its normal.
+For edges $\mathbf{a}$ and $\mathbf{b}$ meeting at angle $\theta$, the normal $\mathbf{n}=\mathbf{a}\times\mathbf{b}$ has magnitude $\lVert\mathbf{a}\rVert\lVert\mathbf{b}\rVert\sin\theta$, which vanishes at $0^\circ$ and $180^\circ$.
+For small perturbations its directional error scales approximately as $\lVert\delta\mathbf{n}_{\perp}\rVert/\lVert\mathbf{n}\rVert$.
+For nearly colinear geometries, coordinate rounding can reverse a plane normal even when the atoms move very little, producing an apparent torsion change near $180^\circ$.
+At exact collinearity the plane normal vanishes and the torsion is undefined.
+
+We assess the sensitivity of a plane's orientation to coordinate quantization using the following bound.
+For an atom $i$, let $\eta_i$ bound the magnitude of its Cartesian displacement due to quantization.
+At $d$ decimal places, each coordinate component has an error bound of $10^{-d}/2$ for rounding to nearest and $10^{-d}$ for truncation toward zero, so $\eta_i$ is $\sqrt{3}$ times this bound.
+For float16, use half the larger spacing to the adjacent representable values for each quantized component, and take the Euclidean norm of those three component bounds.
+For a plane with edges $\mathbf{a}=\mathbf{r}_i-\mathbf{r}_j$ and $\mathbf{b}=\mathbf{r}_k-\mathbf{r}_j$, define $\epsilon_a=\eta_i+\eta_j$ and $\epsilon_b=\eta_k+\eta_j$.
+The normal perturbation obeys
+\begin{align}
+ \delta\mathbf{n} &= \mathbf{a}\times\delta\mathbf{b}
+   +\delta\mathbf{a}\times\mathbf{b}+\delta\mathbf{a}\times\delta\mathbf{b},\\
+ \lVert\delta\mathbf{n}\rVert &\leq
+ \lVert\mathbf{a}\rVert\epsilon_b+
+ \lVert\mathbf{b}\rVert\epsilon_a+\epsilon_a\epsilon_b
+ \equiv R.
+ \label{eq:plane_normal_bound}
+\end{align}
+We apply the criterion $\lVert\mathbf n\rVert>R$ to both defining planes in both reference and quantized geometries, using the same quantizer error radii.
+For a nonzero reference normal $\mathbf n$, the set of normals within distance $R$ of $\mathbf n$ includes the zero vector when $R\geq\lVert\mathbf n\rVert$ and oppositely directed normals when $R>\lVert\mathbf n\rVert$.
+The construction of $R$ replaces directional truncation errors with magnitude bounds and neglects correlations between the two bond-vector errors due to their shared atom.
+The criterion applies near both $0^\circ$ and $180^\circ$.
+
+We exclude torsions $\tau_{i j k l}$ if atom $i$ or $l$ is less than $10^{-10}$ \AA\ from the line through atoms $j$ and $k$ in either geometry.
+The reported XYZ torsion errors additionally require both plane normals to satisfy the criterion above and both adjacent bond angles to lie between $5^\circ$ and $175^\circ$ in both geometries.
+
+For float16 XYZ coordinates, these exclusions give a mean absolute torsion error of $0.0342^\circ$ and a maximum of $2.77^\circ$.
+The maximum is $36.2^\circ$ with the normal criterion alone and $179.9^\circ$ before either screen is applied.
+
+Table~\ref{tab:torsion_flip_flags} counts cases in which an adjacent bond angle satisfies $\theta\geq90^\circ$ and its plane normal satisfies $\lVert\mathbf n\rVert\leq R$ in either geometry.
+These counts are calculated without the $5^\circ$ angular cutoff.
+They distinguish individual torsion measurements, conformers containing at least one such measurement, and molecules containing at least one such conformer.
+
+\subsection{Near-Linear Torsion Examples}
+
+In Figure \ref{fig:problem_torsion}a we show a molecule with a torsion that is highly sensitive to encoding, as one of the corresponding bond angles is $179.988^\circ$.
+The torsion changes from approximately $0^\circ$ to $-179.891^\circ$, while the largest atomic displacement is only $0.00195$ \AA\ and the aligned RMSD is $0.000901$ \AA.
+The large torsion difference therefore describes an unstable plane orientation, not a large displacement of the atoms.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/problem_torsion.png}
+\caption{Torsion-angle sensitivity to Cartesian rounding. The atoms defining each torsion are highlighted in pink. (A) A nearly linear group. (B) The structure with the largest torsion error remaining after the collinearity and angle exclusions.}
+\label{fig:problem_torsion}
+\end{figure}
+
+The largest error remaining after both screens occurs is shown in Figure \ref{fig:problem_torsion}b.
+Its torsion changes from $-0.0544^\circ$ to $2.720^\circ$, with adjacent bond angles of $174.523^\circ$ and $121.657^\circ$.
+The first angle lies close to the $175^\circ$ cutoff.
+
+\subsection{Decimal XYZ Results}
+
+Tables~\ref{tab:xyz_rounding} and \ref{tab:xyz_truncation} show how Cartesian precision affects both local geometry and overall shape, for rounding to nearest and truncation toward zero at one to six decimal places.
+Bond, angle, and RMSD statistics use all 747,974 retained conformers; torsion means and maxima use the declared screened population.
+Even at six decimal places, the largest unscreened torsion errors are $161^\circ$ for rounding and $171^\circ$ for truncation, while mean RMSDs are below $10^{-6}$ \AA.
+This contrast reflects the sensitivity of nearly collinear triples to small coordinate changes.
+
+\begin{table}[htbp]
+\centering
+\caption{Empirical reconstruction errors for XYZ rounded to nearest in \AA. Entries are mean/maximum; the torsion column uses the angular margin and uncertainty screen.}
+\label{tab:xyz_rounding}
+\label{tab:example_table}
+\begin{tblr}{width=\linewidth,colspec={l X X X X},cells={font=\footnotesize},hline{1,2,Z}={0.4pt}}
+Decimals & RMSD (\AA) & $\Delta$Bond (\AA) & $\Delta$Angle ($^\circ$) & $\Delta$Dihedral ($^\circ$) \\
+1 & 4.81E-2 / 6.04E-2 & 3.33E-2 / 1.57E-1 & 2.11 / 11.5 & 2.82 / 36.6 \\
+2 & 4.81E-3 / 6.01E-3 & 3.31E-3 / 1.58E-2 & 2.11E-1 / 1.23 & 2.84E-1 / 10.5 \\
+3 & 4.81E-4 / 6.02E-4 & 3.31E-4 / 1.60E-3 & 2.11E-2 / 1.11E-1 & 2.84E-2 / 1.00E0 \\
+4 & 4.81E-5 / 5.98E-5 & 3.31E-5 / 1.61E-4 & 2.11E-3 / 1.13E-2 & 2.84E-3 / 1.23E-1 \\
+5 & 4.81E-6 / 6.10E-6 & 3.31E-6 / 1.59E-5 & 2.11E-4 / 1.11E-3 & 2.84E-4 / 9.40E-3 \\
+6 & 4.81E-7 / 6.09E-7 & 3.31E-7 / 1.59E-6 & 2.11E-5 / 1.12E-4 & 2.84E-5 / 1.09E-3 \\
+\end{tblr}
+\end{table}
+\begin{table}[htbp]
+\centering
+\caption{Empirical reconstruction errors for XYZ truncated toward zero in \AA. Entries are mean/maximum; the torsion column uses the angular margin and uncertainty screen.}
+\label{tab:xyz_truncation}
+
+\begin{tblr}{width=\linewidth,colspec={l X X X X},cells={font=\footnotesize},hline{1,2,Z}={0.4pt}}
+Decimals & RMSD (\AA) & $\Delta$Bond (\AA) & $\Delta$Angle ($^\circ$) & $\Delta$Dihedral ($^\circ$) \\
+1 & 9.64E-2 / 1.20E-1 & 4.84E-2 / 3.07E-1 & 2.65 / 19.4 & 3.6 / 34.8 \\
+2 & 9.69E-3 / 1.20E-2 & 4.93E-3 / 3.11E-2 & 2.62E-1 / 1.87 & 3.60E-1 / 13.7 \\
+3 & 9.69E-4 / 1.22E-3 & 4.95E-4 / 3.04E-3 & 2.62E-2 / 1.92E-1 & 3.59E-2 / 1.45 \\
+4 & 9.69E-5 / 1.23E-4 & 4.95E-5 / 3.04E-4 & 2.62E-3 / 1.85E-2 & 3.59E-3 / 1.27E-1 \\
+5 & 9.69E-6 / 1.22E-5 & 4.95E-6 / 3.09E-5 & 2.62E-4 / 1.94E-3 & 3.59E-4 / 1.47E-2 \\
+6 & 9.69E-7 / 1.21E-6 & 4.95E-7 / 3.08E-6 & 2.62E-5 / 1.85E-4 & 3.59E-5 / 1.26E-3 \\
+\end{tblr}
+\end{table}
+\begin{table}[htbp]
+\centering
+\caption{Numbers of molecules, conformers, and torsion measurements for which a defining plane satisfies $\lVert\mathbf n\rVert\leq R$ and $\theta\geq90^\circ$ in the original or quantized geometry. These counts do not apply the $5^\circ$ angular cutoff.}
+\label{tab:torsion_flip_flags}
+\begin{tblr}{width=\linewidth,colspec={X[1.6,l] X[r] X[r] X[1.4,r]},cells={font=\footnotesize},hline{1,2,Z}={0.4pt}}
+XYZ format & Molecules & Conformers & Torsion instances \\
+Float16 (\AA) & 2,327 & 8,168 & 22,311 \\
+Rounded, 1 decimal & 4,199 & 51,322 & 119,552 \\
+Rounded, 2 decimals & 3,475 & 43,791 & 94,661 \\
+Rounded, 3 decimals & 1,874 & 4,915 & 15,914 \\
+Rounded, 4 decimals & 956 & 2,297 & 7,944 \\
+Rounded, 5 decimals & 363 & 536 & 1,857 \\
+Rounded, 6 decimals & 67 & 72 & 239 \\
+Truncated, 1 decimal & 6,038 & 95,577 & 263,685 \\
+Truncated, 2 decimals & 3,773 & 46,129 & 102,129 \\
+Truncated, 3 decimals & 2,428 & 7,273 & 21,745 \\
+Truncated, 4 decimals & 1,123 & 2,875 & 9,862 \\
+Truncated, 5 decimals & 517 & 927 & 3,225 \\
+Truncated, 6 decimals & 116 & 135 & 462 \\
+\end{tblr}
+\par\smallskip
+\noindent\footnotesize Denominators are 10,000 distinct molecules and 747,974 retained conformers. A torsion instance is one unique four-atom path in one conformer. Flags at different precisions can overlap.
+\end{table}
+\subsection{Bond-Graph Errors after Internal-Coordinate Reconstruction}
+
+A $Z$-matrix stores selected internal coordinates; other bond lengths, angles, and torsions follow indirectly from the Cartesian reconstruction.
+Errors can accumulate in these indirectly determined quantities, especially across a bond that closes a ring, which will not be included in a Z-matrix.
+Table~\ref{tab:native_graph_errors} reports errors over the molecular bond graph, separately from the bounds on directly stored coordinates.
+The Z-Matrix and Encoded results include all numerically defined graph torsions; the XYZ results exclude the ill-conditioned torsions described above.
+
+\begin{table}[htbp]
+\centering
+\caption{Errors after internal-coordinate reconstruction, measured over the heavy-atom bond graph. Entries give means and maxima. Local-coordinate means are calculated first within each conformer, then over conformers; torsions include all numerically defined quartets.}
+\label{tab:native_graph_errors}
+\begin{tblr}{width=\linewidth,colspec={X X X},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Metric & Z-Matrix & Encoded \\
+$\Delta$Bond (\AA) & 1.84E-5 / 1.09E-3 & 1.09E-3 / 3.42E-1 \\
+$\Delta$Angle (${}^\circ$) & 9.85E-4 / 5.66E-2 & 2.30E-1 / 13.4 \\
+$\Delta$Dihedral (${}^\circ$) & 5.05E-3 / 180 & 4.55E-1 / 175 \\
+RMSD (\AA) & 1.19E-4 / 6.19E-4 & 3.19E-2 / 1.49E-1 \\
+\end{tblr}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Effect of ensemble weighting after $0.25$ \AA\ RMSD pruning. The first mean weights each of the 747,974 retained conformers equally; the second averages within each molecule before weighting all 10,000 molecules equally. Maxima are independent of weighting.}
+\label{tab:distinct_weighting}
+\begin{tblr}{width=\linewidth,colspec={X X X X},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Format & Conformer mean RMSD (\AA) & Molecule mean RMSD (\AA) & Maximum RMSD (\AA) \\
+XYZ float16 & 9.49E-4 & 9.19E-4 & 2.11E-3 \\
+Z-Matrix & 1.19E-4 & 1.14E-4 & 6.19E-4 \\
+Encoded & 3.19E-2 & 3.08E-2 & 1.49E-1 \\
+\end{tblr}
+\end{table}
+
+\subsection{eMolecules Sample and Conformer Generation}
+
+We sampled entries from the January 2026 release of the eMolecules dataset.
+Disconnected structures and molecules with fewer than three heavy atoms were excluded.
+The comparison uses 10,000 molecules for which 100 candidate conformers could be generated.
+
+Conformers were generated with ETKDGv3, including explicit hydrogens and enforcing stereochemistry, without force-field optimization.\cite{Riniker2015ETKDG,Wang2020ETKDGMacrocycles}
+Hydrogens, including isotopic hydrogens, were removed before pruning and reconstruction-error measurements.
+Pruning used the minimum heavy-atom RMSD over proper rotations and graph-symmetry-equivalent atom mappings, with conjugated terminal groups symmetrized.
+We retained the first generated conformer, then accepted each subsequent conformer only if its RMSD from every retained conformer was at least $0.25$ \AA.
+
+The resulting sample contains 747,974 conformers, with 1--100 conformers per molecule, a mean of 74.8, and a median of 88.
+Reconstruction errors use fixed atom correspondence, whereas the pruning RMSD allows equivalent-atom permutations.
+The accompanying data identify the molecules, retained conformers, generation seeds, reference coordinates, and reconstruction errors.
+
+% Calculations used Python 3.11.17, RDKit 2025.9.6, NumPy 2.4.6, SciPy 1.17.1, McUtils 1.7.5.2, and Psience 1.5.0.
+% {\small McUtils and Psience Git revisions were
+% \texttt{2e5ac6ef}\allowbreak\texttt{d3201550}\allowbreak\texttt{92607d13}\allowbreak\texttt{b61be96c}\allowbreak\texttt{f93d9323} and
+% \texttt{f04797fd}\allowbreak\texttt{d2dbcef7}\allowbreak\texttt{baf39263}\allowbreak\texttt{920afb63}\allowbreak\texttt{f359be9f}, respectively.}
+The Z-Matrix and Encoded formats in this comparison use no extra encoder/decoder model, as discussed below.
+For $N\geq3$, the complete representation stores $N-1$ distances, $N-2$ angles, and $N-3$ dihedrals: $3N-6$ 16-bit entries, or $6N-12$ bytes.
+Packing retains $N-1$ 16-bit distances and the first 16-bit angle, and combines the remaining $N-3$ angle/dihedral pairs into 16-bit entries: $4N-6$ bytes.
+Cartesian float16 stores $3N$ entries, or $6N$ bytes; SMILES supplies connectivity separately.
+
+\section{Distribution Models and Constrained Quantization}
+\label{sec:distribution_methods}
+
+The angle models assign more encoding levels near the common tetrahedral and trigonal angles, approximately $109.5^\circ$ and $120^\circ$.
+This gives finer resolution near these angles and coarser resolution elsewhere.
+We compare a model optimized for reconstruction error under a maximum-error constraint (Base) with a model fitted by maximum likelihood to the coordinate distribution (Fit).
+
+The encoder evaluates the model's cumulative distribution function (CDF) at the angle, rounds the result to a discrete level, and applies the inverse CDF to decode it.
+In signal processing, this is a sometimes referred to as a companding quantizer.\cite{Bennett1948QuantizedSignals}
+Fitting the coordinate density and minimizing reconstruction error are different objectives, so their preferred allocation of encoding levels can differ.\cite{Lloyd1982ScalarQuantization}
+
+\subsection{Coordinate Samples and Encoder Settings}
+
+The fits use ten million bond angles and ten million dihedral angles sampled from GEOM.
+Sampling is over coordinate values, so molecules with more coordinates can contribute more observations, but the same samples are used for all model comparisons.
+Gaussian parameters and encoded angles use radians, while plotted angles and errors use degrees.
+
+Each angle--dihedral pair occupies 16 bits, with eight bits for each coordinate.
+The first bond angle has a separate 16-bit field.
+Inverse cumulative distributions are tabulated at 65,537 points.
+Bond-angle errors are absolute differences between original and decoded values. 
+Dihedral errors use the shortest circular difference, $|((\theta-\widehat{\theta}+\pi)\bmod2\pi)-\pi|$.
+Reported means and standard deviations describe these absolute errors over the full coordinate samples.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.75\textwidth]{\RootDirectory/figures/encoding_20261013_dihedral_error_original_frame.pdf}
+\caption{Dihedral reconstruction errors (top) and encoding densities (bottom) for Uniform, shifted Base, and likelihood Fit. Densities use the original dihedral coordinate. Legend values are the mean, maximum, and standard deviation of absolute error, in degrees, over all ten million dihedrals.}
+\label{fig:dihedral_error_comp}
+\end{figure}
+
+\subsection{Controlling Typical and Rare Errors}
+
+Each final Base uses seven normal Gaussian components,
+\begin{equation}
+ f_\eta(x)=\sum_{j=1}^7w_j\,\mathcal{N}(x;\mu_j,\sigma_j^2),
+ \qquad w_j>0,\quad\sum_jw_j=1.
+ \label{eq:gaussian_encoding_model}
+\end{equation}
+The Gaussian mixture is normalized over $[0,\pi]$ for bond angles or $[0,2\pi]$ for dihedrals.
+For sampled coordinates $x_i$, Base minimizes $n^{-1}\sum_i e_i(\eta)$ subject to $\max_i e_i(\eta)\leq0.995^\circ$, where $e_i$ is the decoded absolute angular error.
+Broad Gaussian components preserve resolution away from the dominant peaks and help satisfy the maximum-error constraint.
+
+For bond angles, the unconstrained seven-Gaussian model has a mean error of $0.0290^\circ$ but a maximum of $7.15^\circ$.
+Imposing the $1^\circ$ cap increases the mean to $0.0359^\circ$ and reduces the maximum to $0.995^\circ$.
+Table~\ref{tab:angular_model_errors} gives the errors for the selected models.
+
+\subsubsection{Search settings}
+
+The objective and constraints were evaluated by encoding and decoding the sampled coordinates with the quantizer used in the comparisons.
+Gaussian widths and unnormalized weights were optimized on logarithmic scales, and weights were normalized to sum to one.
+For angles, the bounds on means, widths, and unnormalized weights were $[0,180]^\circ$, $[0.5,70]^\circ$, and $[0.001,1]$; for dihedrals they were $[0,360]^\circ$, $[0.05,600]^\circ$, and $[0.001,1]$.
+
+We used two COBYLA stages, each allowing 1,600 evaluations.
+The initial mixtures included broad components and peaks near the main angular modes; dihedral means started near $0^\circ$, $60^\circ$, $180^\circ$, $300^\circ$, and $360^\circ$.
+The lowest-mean-error fit satisfying the cap was retained and checked against all ten million coordinates.
+
+\subsection{Choosing the Torsion Interval}
+
+Angles near $0^\circ$ and $360^\circ$ describe similar torsions, but a Gaussian mixture on this interval must fit their peak at both ends.
+We moved the interval boundary to a region of low density so that the peak lies inside the fitted interval (Figure~\ref{fig:dihedral_cut_distribution}).
+A circular histogram with $0.1^\circ$ bins, smoothed over $4.1^\circ$, placed its minimum at $s=112.45^\circ$.
+The forward and inverse transformations are
+\begin{equation}
+ \phi=(\theta-s)\bmod 2\pi,\qquad
+ \widehat{\theta}=(\widehat{\phi}+s)\bmod 2\pi,
+ \label{eq:dihedral_shift}
+\end{equation}
+with $s$ expressed in radians in these equations.
+The original $0/360^\circ$ peak then lies at $247.55^\circ$.
+The shift is shared by the encoder and decoder and is not stored for each conformer.
+
+\subsubsection{Fitting in the Shifted Coordinate}
+
+Initial placements combined a broad background with components at the shifted positions of the principal original modes.
+The preliminary objective used weighted centers of 360,000 empirical histogram bins; the maximum-error constraint used 1,000,001 angular grid points plus points immediately around the cut, with a $0.0004^\circ$ margin below the $0.995^\circ$ target.
+Two COBYLA stages used these binned coordinates, followed by up to 800 evaluations on the full sample.
+Final errors and constraint checks used all ten million coordinates.
+
+The forward encoder subtracts the shared shift before evaluating the CDF, and the decoder restores it modulo $2\pi$ after inverse-CDF decoding.
+Decoded torsions are expressed in $[-\pi,\pi]$.
+% Checks at 16, 32, and 64 bits in packed and unpacked modes confirmed unchanged payload sizes and reproduction of the unshifted encoded bytes and decoded streams when the shift is zero.
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.75\textwidth]{\RootDirectory/figures/encoding_20261013_dihedral_cut_distribution.pdf}
+\caption{Empirical dihedral density before (upper) and after (lower) subtracting the $112.45^\circ$ cut modulo $360^\circ$. The same ten million coordinates contribute to both panels. The original $0/360^\circ$ peak is consolidated at $247.55^\circ$ in the shifted frame. Densities are per degree.}
+\label{fig:dihedral_cut_distribution}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.75\textwidth]{\RootDirectory/figures/encoding_20261013_dihedral_error_shifted_frame.pdf}
+\caption{Reconstruction errors and encoding densities for the models in Fig.~\ref{fig:dihedral_error_comp}, with the lower panel plotted against the shifted angle $\phi$. The same ten million dihedrals are used.}
+\label{fig:dihedral_shifted_frame}
+\end{figure}
+
+\subsection{Density Fit and Reconstruction Error}
+
+Maximum-likelihood refitting concentrates encoding levels around the largest density peaks, without the Base model's maximum-error constraint.
+For angles, the mean log likelihood increases from 0.575 to 1.157 nats per coordinate, but the mean reconstruction error rises to $0.190^\circ$ and the maximum reaches $49.6^\circ$.
+Base instead reduces mean absolute error by a factor of 4.90 relative to Uniform, shown in Table~\ref{tab:angular_model_errors}.
+The likelihood fit gives too few encoding levels to less common angles, producing large errors there.
+
+Shifting the dihedral interval improves the likelihood Fit near the original $0/360^\circ$ peak: within $5^\circ$ of that peak, the mean error falls from $0.269^\circ$ to $0.0519^\circ$.
+Across all dihedrals, however, the shifted Fit has a mean error of $0.444^\circ$ and a maximum of $7.00^\circ$, compared with $0.240^\circ$ and $0.986^\circ$ for shifted Base.
+The improved fit to the main peak is therefore offset by larger errors elsewhere.
+
+The central error plots omit large errors from view. Table~\ref{tab:angular_model_errors} includes every sampled coordinate.
+For the shifted Fit, the largest error occurs when an original angle of $119.453^\circ$ decodes to the $112.45^\circ$ interval boundary.
+All 139,880 errors above $4^\circ$ occur between original angles of $80^\circ$ and $150^\circ$.
+
+\subsubsection{Likelihood-refit settings}
+
+The likelihood fit starts from the Base Gaussian parameters and maximizes $\sum_i\log f_\eta(x_i)$ using angles in radians.
+We used a likelihood tolerance of $10^{-7}$ and a minimum Gaussian standard deviation of $0.05^\circ$.
+The mixture is fitted before truncation to the angular interval.
+Reported mean log likelihoods include the normalization correction $-\log[F_\eta(b)-F_\eta(a)]$ for interval $[a,b]$ and are evaluated on the fitting samples.
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.75\textwidth]{\RootDirectory/figures/encoding_20261013_dihedral_error_unshifted_base.pdf}
+\caption{Uniform, the unshifted seven-Gaussian Base, and its likelihood Fit. This Base is used for the Cartesian RMSD and energy comparisons. Legend statistics include all ten million dihedrals, including errors outside the central plot range.}
+\label{fig:dihedral_unshifted_comparison}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{Full-sample absolute reconstruction errors in degrees. Each row uses ten million coordinates. Standard deviations use population normalization. Uniform is the original unshifted quantizer for each coordinate type.}
+\label{tab:angular_model_errors}
+\begin{tblr}{width=\linewidth,colspec={X[1.5,l] X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Coordinate / model & Mean & Maximum & Std. dev. \\
+Angle Uniform & 0.175678 & 0.352941 & 0.101767 \\
+Angle Base & 0.035885 & 0.994712 & 0.040414 \\
+Angle Fit & 0.190465 & 49.597543 & 2.585148 \\
+Dihedral, unshifted Uniform & 0.352335 & 0.705882 & 0.207110 \\
+Dihedral, unshifted Base & 0.241721 & 0.993766 & 0.231873 \\
+Dihedral, unshifted Fit & 0.447314 & 4.949659 & 0.743028 \\
+Dihedral, shifted Base & 0.239923 & 0.986005 & 0.226746 \\
+Dihedral, shifted Fit & 0.444321 & 7.002670 & 0.834105 \\
+\end{tblr}
+\end{table}
+
+\subsection{Gaussian Parameters}
+
+The tables give Gaussian means and standard deviations in degrees, and mixture weights before normalization over the angular interval.
+Shifted-dihedral parameters refer to the coordinate $\phi$ defined above.
+Full-precision parameters and the tabulated inverse cumulative distributions are supplied with the accompanying data.
+
+
+\begin{table}[htbp]
+\centering
+\caption{Angle Base: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:angle_base}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 26.522033 & 57.504137 & 0.23618268 \\
+2 & 158.452826 & 55.095194 & 0.21719518 \\
+3 & 109.105607 & 2.180309 & 0.18394087 \\
+4 & 119.914588 & 4.028550 & 0.16696393 \\
+5 & 117.959444 & 11.384312 & 0.18803761 \\
+6 & 63.436989 & 3.385865 & 0.00445846 \\
+7 & 179.194013 & 4.934872 & 0.00322126 \\
+\end{tblr}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Angle likelihood Fit: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:angle_fit}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 110.384455 & 11.126480 & 0.01987307 \\
+2 & 109.653006 & 2.717430 & 0.23732821 \\
+3 & 109.332298 & 1.090782 & 0.31290946 \\
+4 & 119.958437 & 0.996884 & 0.21247625 \\
+5 & 120.375509 & 4.860752 & 0.21649198 \\
+6 & 59.906559 & 0.582449 & 0.00049368 \\
+7 & 177.572638 & 1.902675 & 0.00042736 \\
+\end{tblr}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Unshifted dihedral Base: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:dihedral_unshifted_base}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 180.002167 & 440.737212 & 0.88143088 \\
+2 & -0.000000 & 1.967256 & 0.02518516 \\
+3 & 60.076737 & 6.798343 & 0.01434899 \\
+4 & 180.101952 & 2.080619 & 0.02392567 \\
+5 & 299.736205 & 6.613264 & 0.01381937 \\
+6 & 360.000000 & 1.983844 & 0.02051164 \\
+7 & 180.282642 & 11.578255 & 0.02077829 \\
+\end{tblr}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Unshifted dihedral likelihood Fit: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:dihedral_unshifted_fit}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 180.022524 & 106.125319 & 0.36804824 \\
+2 & 0.724545 & 0.737534 & 0.08571899 \\
+3 & 59.765700 & 6.096973 & 0.09725764 \\
+4 & 180.001461 & 0.540742 & 0.11206270 \\
+5 & 300.244503 & 6.101696 & 0.09749135 \\
+6 & 359.274284 & 0.739097 & 0.08568628 \\
+7 & 180.007725 & 3.936927 & 0.15373481 \\
+\end{tblr}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Shifted dihedral Base: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:dihedral_shifted_base}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 197.453558 & 593.070667 & 0.92444742 \\
+2 & 247.553774 & 1.804803 & 0.01736687 \\
+3 & 307.704460 & 6.405924 & 0.01225805 \\
+4 & 67.778044 & 1.804024 & 0.01409271 \\
+5 & 187.261388 & 6.416213 & 0.01197955 \\
+6 & 67.685996 & 11.009598 & 0.01580431 \\
+7 & 247.590926 & 10.957206 & 0.00405108 \\
+\end{tblr}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{Shifted dihedral likelihood Fit: seven normal Gaussian kernels. Means and standard deviations are in degrees; weights sum to one before interval normalization.}
+\label{tab:dihedral_shifted_fit}
+\begin{tblr}{width=.9\linewidth,colspec={r X[r] X[r] X[r]},cells={font=\small},hline{1,2,Z}={0.4pt}}
+Component & $\mu$ ($^\circ$) & $\sigma$ ($^\circ$) & $w$ \\
+1 & 180.482309 & 97.383158 & 0.34821640 \\
+2 & 247.549922 & 0.393698 & 0.09388802 \\
+3 & 307.974673 & 6.898802 & 0.10441095 \\
+4 & 67.553197 & 0.695121 & 0.13597598 \\
+5 & 187.496359 & 4.249931 & 0.07319102 \\
+6 & 67.359639 & 5.848732 & 0.15776425 \\
+7 & 247.565441 & 2.144808 & 0.08655337 \\
+\end{tblr}
+\end{table}
+
+
+\clearpage
+\section{Quantization-Consistent Reconstruction with Ring-Closure Constraints}
+\label{sec:constraint_reconstruction}
+
+\subsection{Storing Additional Bond Lengths}
+
+A $Z$-matrix places atoms sequentially using selected distances, angles, and torsions.
+It can reproduce these stored quantities accurately while distorting a ring-closing bond, whose length depends on several coordinates along the construction sequence.
+A small overall RMSD can therefore coexist with a chemically important bond-length error.
+
+We also store chemical bond lengths that are absent from the $Z$-matrix distance entries and use them as reconstruction constraints.
+Each atom is identified by its row in the canonical $Z$-matrix.
+For an omitted bond, the smaller row number is written first; bonds are sorted by the larger row number, with the smaller number breaking ties.
+The decoder derives this list from the molecular graph and $Z$-matrix, so atom indices need not be stored separately with every conformer.
+The representation can also include omitted angles and dihedrals, but the comparisons here store only additional bond lengths, using the same 16-bit quantizer as the $Z$-matrix distances.
+
+\subsection{Reconstruction Within Quantization Intervals}
+
+A quantized coordinate represents a set of possible coordinate values.
+For a stored code $k_i$ and forward encoder $E_i$, define its admissible set by
+\begin{equation}
+    I_i=\{q_i:E_i(q_i)=k_i\}.
+    \label{eq:constraint_code_cell}
+\end{equation}
+The decoder recovers each interval from the stored code, quantization settings, and encoder model.
+A nonuniform encoder gives narrower intervals where it assigns more encoding levels.
+For a torsion, multiples of $2\pi$ are added or subtracted as needed to express the allowed interval continuously around the decoded angle.
+Ring-closure lengths have their own quantization intervals.
+No interval bounds need to be stored in addition to the coordinate codes and model identifier.
+
+Let $\mathbf q^0$ denote the conventionally decoded $Z$-matrix values and $\mathbf X(\mathbf q)$ their Cartesian reconstruction.
+For each omitted bond $c=(a,b)$, let $[\ell_c,u_c]$ be its encoded interval and
+$d_c(\mathbf X)=\lVert\mathbf X_a-\mathbf X_b\rVert$.
+We seek a nearby geometry by solving
+\begin{equation}
+\begin{aligned}
+    \underset{\mathbf q}{\mathrm{minimize}}\quad&
+        \frac{1}{2}\sum_i\left(\frac{q_i-q_i^0}{s_i}\right)^2,\\
+    \mathrm{subject\ to}\quad& q_i\in I_i\quad\text{for every stored $Z$-matrix coordinate},\\
+        &\ell_c\leq d_c\bigl(\mathbf X(\mathbf q)\bigr)\leq u_c
+          \quad\text{for every stored closure bond}.
+\end{aligned}
+\label{eq:constraint_projection}
+\end{equation}
+The scale $s_i$ is the median decoded $Z$-matrix distance for a distance coordinate and one radian for an angular coordinate.
+The objective minimizes changes to the decoded internal coordinates.
+The constraints keep those coordinates and the ring-closing bond lengths within their respective quantization intervals; they do not require the closure lengths to equal the interval midpoints.
+The original geometry satisfies these intervals, whereas simultaneous rounding to their midpoints can produce an incompatible set of coordinates.
+The optimization uses no energy model.
+
+If an interval has width $w_i$, the reconstructed coordinate can differ from its original value by at most $w_i$.
+This is twice the half-step error of midpoint decoding for a symmetric uniform rounding interval.
+For a torsion, the shortest circular difference is also bounded by $\pi$.
+These are bounds on individual internal coordinates; the resulting Cartesian and energy changes depend on the molecular geometry.
+
+\subsection{Variables and Numerical Solution}
+
+Only coordinates that change the relative positions of the two atoms can affect a closure distance.
+Coordinates that translate or rotate both atoms together are excluded from the optimization.
+We retain the reference atoms needed to evaluate the remaining coordinates; these can lie outside the chemical ring.
+All other coordinates are fixed at the nearest values allowed by their quantization intervals.
+
+We solve the reduced problem by sequential quadratic programming with analytic constraint derivatives.
+If the decoded geometry already satisfies the intervals, no optimization is needed.
+Structures without additional bond constraints use ordinary Cartesian reconstruction followed by a check that the coordinates remain within their encoded intervals.
+
+After optimization, all stored distances, angles, torsions, and closure lengths are measured from the reconstructed Cartesian geometry and checked against their intervals.
+The solution must also satisfy the first-order stationarity criterion.
+If the Cartesian check fails, the same selected variables are refined while evaluating the full Cartesian reconstruction.
+Nonfinite coordinates, interval violations beyond numerical roundoff, or failure to converge cause the reconstruction to be rejected.
+
+\subsection{GEOM Reconstruction Settings}
+
+The comparison uses the 100,000 sampled GEOM conformers described in Sec.~\ref{sec:geom_rmsd_methods}, including all hydrogens and the same atom ordering and $Z$-matrix references.
+Complete molecular graphs are available for 99,990 conformers, which are used throughout the RMSD and timing comparisons.
+Uniform and Model use identical packed precision and closure-bond measurements.
+Model uses the angle Base and unshifted dihedral Base from Tables~\ref{tab:angle_base} and \ref{tab:dihedral_unshifted_base}, with the archived full-precision inverse-CDF grids.
+Adaptive stores a one-byte index identifying the selected encoder.
+This index is chosen during encoding using the original geometry, as described in Sec.~\ref{sec:geom_rmsd_methods}.
+Model parameters, quantization precision, and the choice of additional constraints are shared across records.
+
+The solve starts from the decoded representatives, uses the scaled objective in Eq.~\ref{eq:constraint_projection}, and allows at most 300 sequential quadratic programming iterations.
+We used optimizer stopping tolerance $10^{-12}$, scaled coordinate-bound feasibility tolerance $10^{-11}$, and first-order stationarity tolerance $10^{-6}$, with acceptance checked during iteration.
+Final measured-coordinate checks allow $10^{-10}$ \AA\ or radian for floating-point roundoff; this allowance does not add a quantization bin to any interval.
+Unconstrained controls place the same decoded packets without the interval solve.
+Adaptive retains the same model identifier in this paired control, rather than selecting a different model after removing the constraints.
+Timings distinguish ordinary decoding, interval recovery, constrained reconstruction, and final validation; all attempted returns and their statuses are retained.
+
+\section{GEOM Reconstruction Energy Changes}
+\label{sec:geom_energy_methods}
+
+\subsection{Matched Reconstruction and Energy Comparisons}
+
+Energy changes measure how each potential responds to the reconstructed geometry, complementing the Cartesian displacement measured by RMSD.
+The comparison includes Uniform, Model, and Adaptive with ordinary reconstruction and with closure-bond interval constraints.
+The reconstructed geometries are evaluated without energy minimization.
+Closure correction uses only the geometric constraints, and Adaptive selects models by RMSD.
+Lossy molecular-dynamics compression likewise motivates evaluating energetic consequences alongside coordinate error.\cite{Roe2022:compression-energy}
+
+For potential $p$, encoder $c$, and reconstruction treatment $d$, the signed change is
+\begin{equation}
+ \Delta E_i^{(p,c,d)}=E_p(\widehat{\mathbf R}_i^{(c,d)};q_i,m_i)
+                    -E_p(\mathbf R_i;q_i,m_i).
+ \label{eq:geom_energy_change}
+\end{equation}
+Both evaluations use the same potential, atomic identities, charge $q_i$, and multiplicity $m_i$.
+Geometry-independent composition offsets therefore cancel.
+Energy changes can be negative because the original GEOM geometry need not be an energy minimum of the evaluating potential.
+
+Comparisons with and without closure constraints use the same 99,488 conformers for all encoders and potentials.
+These conformers have complete reconstruction and energy results for every condition.
+Of the original 100,000 conformers, 31 were excluded because of incomplete molecular graphs or inconsistent charges, and 481 lacked the full set of constrained reconstructions.
+% The energy calculations use geometries reconstructed before the decoder speed improvements.
+% We used the faster decoder for the 99,990-conformer RMSD and timing comparisons but did not repeat the energy calculations.
+
+For the energy comparison, Adaptive selects the lower-RMSD reconstruction separately with and without closure constraints.
+It can therefore choose different models in the two treatments.
+The RMSD and timing comparisons instead use the model selected after constrained reconstruction in both treatments, holding the encoded data fixed when measuring the effect of the constraints (Sections~\ref{sec:geom_rmsd_methods} and~\ref{sec:geom_decode_timings}).
+
+\subsection{Typical Changes and Complete Tails}
+
+For Model, closure constraints reduce the mean absolute energy change (MAE) from $1.30$--$1.31$ to $0.900$--$0.924$ kJ mol$^{-1}$.
+For Uniform, the corresponding reduction is from $2.58$--$2.63$ to $1.41$--$1.44$ kJ mol$^{-1}$.
+Each range spans the three potentials (Table~\ref{tab:geom_energy_statistics}).
+Constrained Adaptive gives $0.952$--$0.972$ kJ mol$^{-1}$, slightly above Model: selecting for lower RMSD does not necessarily select for smaller energy changes.
+The largest individual absolute changes for constrained Model are $43.8$--$53.7$ kJ mol$^{-1}$ across the potentials.
+
+\begin{sidewaystable}[p]
+\centering
+\caption{Absolute reconstruction energy changes for 99,488 conformers, in kJ mol$^{-1}$. MAE is the mean of $|\Delta E|$; P10, P90, and Max.\ are its 10th percentile, 90th percentile, and maximum. Count is the number with $|\Delta E|>10$ kJ mol$^{-1}$. Adaptive selects the lower-RMSD model separately for each treatment. Default denotes AIMNet2 $\omega$B97M-D3.}
+\label{tab:geom_energy_statistics}
+\begin{tblr}{width=\linewidth,colspec={Q[l] Q[l] *{4}{X[r]} Q[r] *{4}{X[r]} Q[r]},colsep=3pt,rowsep=3pt,cells={font=\small},row{1,2}={font=\bfseries},hline{1,3,6,9,Z}={0.4pt},vline{3,8}={0.3pt}}
+\SetCell[r=2]{l} Potential & \SetCell[r=2]{l} Encoder & \SetCell[c=5]{c} Without closure constraints &  &  &  &  & \SetCell[c=5]{c} With closure constraints &  &  &  &  \\
+ &  & MAE & P10 & P90 & Max. & \shortstack{Count\\$>10$} & MAE & P10 & P90 & Max. & \shortstack{Count\\$>10$} \\
+NSE & Uniform & 2.62 & 0.655 & 4.92 & 157 & 751 & 1.41 & 0.292 & 2.70 & 57.8 & 182 \\
+ & Model & 1.30 & 0.156 & 2.80 & 232 & 416 & 0.900 & 0.118 & 1.90 & 43.8 & 131 \\
+ & Adaptive & 1.51 & 0.186 & 3.35 & 172 & 329 & 0.952 & 0.132 & 2.01 & 40.6 & 67 \\
+B97-3c & Uniform & 2.58 & 0.615 & 4.88 & 156 & 739 & 1.44 & 0.289 & 2.77 & 57.1 & 208 \\
+ & Model & 1.30 & 0.152 & 2.82 & 242 & 403 & 0.924 & 0.117 & 1.96 & 51.3 & 135 \\
+ & Adaptive & 1.50 & 0.179 & 3.35 & 171 & 314 & 0.972 & 0.133 & 2.07 & 27.5 & 69 \\
+Default & Uniform & 2.63 & 0.656 & 4.91 & 166 & 734 & 1.42 & 0.302 & 2.70 & 62.2 & 178 \\
+ & Model & 1.31 & 0.160 & 2.79 & 250 & 403 & 0.904 & 0.121 & 1.89 & 53.7 & 119 \\
+ & Adaptive & 1.52 & 0.188 & 3.36 & 167 & 325 & 0.960 & 0.136 & 2.02 & 29.5 & 73 \\
+\end{tblr}
+\end{sidewaystable}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_main.pdf}
+\caption{Signed reconstruction energy changes predicted by AIMNet2-NSE, AIMNet2-2025 (B97-3c), and default AIMNet2 ($\omega$B97M-D3), from left to right. Blue, green, and pink denote Uniform, Model, and Adaptive. Dashed curves are unconstrained; solid, filled curves include closure constraints. All panels use the same 99,488 conformers and show smoothed counts.}
+\label{fig:geom_energy_distribution}
+\end{figure}
+
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_full.pdf}
+\caption{The energy-change distributions in Fig.~\ref{fig:geom_energy_distribution} shown over their full observed ranges, using the same fits and 99,488 conformers.}
+\label{fig:geom_energy_tails}
+\end{figure}
+\clearpage
+
+\subsection{Agreement of Unconstrained Energy Changes Across Potentials}
+
+We compare unconstrained energy changes across potentials on the same 99,969 eligible conformers, a larger cohort than the 99,488-conformer matched closure comparison.
+Here the reconstruction index $d$ is unconstrained and is suppressed in the notation.
+The similar population means across potentials do not imply identical responses for individual conformers.
+We compare their responses to each coordinate perturbation through
+\begin{equation}
+ C_i^{(p,r,c)}=\Delta E_i^{(p,c)}-\Delta E_i^{(r,c)}.
+ \label{eq:geom_reconstruction_theory_difference}
+\end{equation}
+For Model, B97-3c and default $\omega$B97M-D3 give a mean absolute paired difference of 0.42 kJ mol$^{-1}$ and a Pearson correlation of 0.955 (Table~\ref{tab:geom_reconstruction_theory_agreement}).
+The comparison measures agreement in the predicted response to encoding, after composition offsets cancel within each $\Delta E$.
+Differences can reflect both the training reference method and the fitted potential.
+NSE and default AIMNet2 target the same nominal $\omega$B97M-D3 family but are distinct fitted models.
+
+\begin{table}[htbp]
+\centering
+\caption{Agreement between unconstrained reconstruction energy changes predicted by different potentials on the same 99,969 eligible conformers. MAE is the mean of $|C_i|$ from Eq.~\ref{eq:geom_reconstruction_theory_difference}; P10/P90 and Max.\ describe the same absolute paired differences, in kJ mol$^{-1}$. Pearson $r$ remains a correlation of the signed $\Delta E$ values. All tails are included. This cohort is separate from the matched closure comparison; paired differences measure inter-potential agreement, not error against an independent reference.}
+\label{tab:geom_reconstruction_theory_agreement}
+\begin{tblr}{width=\linewidth,colspec={X[2.1,l] X[1.1,l] *{5}{X[r]}},colsep=3pt,cells={font=\small},hline{1,2,Z}={0.4pt}}
+Potential pair & Encoder & MAE & P10 & P90 & Max. & Pearson $r$ \\
+B97-3c / NSE & Uniform & 0.587 & 0.0741 & 1.28 & 25.1 & 0.937 \\
+B97-3c / NSE & Model & 0.419 & 0.0482 & 0.929 & 21.9 & 0.955 \\
+Default / NSE & Uniform & 0.521 & 0.0634 & 1.14 & 18.4 & 0.946 \\
+Default / NSE & Model & 0.403 & 0.0429 & 0.900 & 22.0 & 0.956 \\
+B97-3c / Default & Uniform & 0.594 & 0.0752 & 1.29 & 21.2 & 0.935 \\
+B97-3c / Default & Model & 0.424 & 0.0477 & 0.940 & 19.5 & 0.955 \\
+\end{tblr}
+\end{table}
+
+\subsection{Geometries and Energy Evaluation}
+
+The reference and reconstructed geometries include all atoms and explicit hydrogens.
+Model uses the seven-Gaussian angle Base and unshifted dihedral Base in Tables~\ref{tab:angle_base} and \ref{tab:dihedral_unshifted_base}, optimized with the $1^\circ$ sample error cap.
+Uniform and Model use identical bond-length quantization and packed angular precision.
+Both use the canonical fragment construction.% with local attachment references enabled and validation performed before coordinate conversion.
+% The same explicit reference Z-matrix is supplied to encoding and decoding for each conformer.
+% Atomic numbers and reference coordinates for all 100,000 conformers exactly matched the archived sample.
+% Reference and reconstructed single-point energies were evaluated together; every eligible reference energy reproduced the archived reference value exactly.
+
+Energies were evaluated for the reference geometries and for reconstructions with and without closure constraints, using AIMNet2-NSE, AIMNet2-2025 (B97-3c), and default AIMNet2 ($\omega$B97M-D3).\cite{AIMNet2-NSE,AIMNet2,AIMNetCentralModelGuide}
+NSE was trained against unrestricted $\omega$B97M-D3(BJ)/def2-TZVPP with Becke--Johnson damping; default AIMNet2 targets $\omega$B97M-D3/def2-TZVPP, and AIMNet2-2025 targets B97-3c.\cite{AIMNet2-NSE,AIMNet2,AIMNetCentralModelGuide}
+Each potential used ensemble member 0, without averaging over models.
+The respective checkpoints are \texttt{aimnet2nse\_}\allowbreak\texttt{wb97m\_0.pt}, \texttt{aimnet2\_2025\_}\allowbreak\texttt{b973c\_d3\_0.pt}, and \texttt{aimnet2\_}\allowbreak\texttt{wb97m\_d3\_0.pt}.
+The same atomic numbers, charge, and multiplicity were used for every geometry of a conformer.
+Raw energies were saved in eV and changes converted using $1\ \mathrm{eV}=96.48533212331002\ \mathrm{kJ\,mol^{-1}}$.
+
+\subsection{Electronic States and Exclusions}
+
+The total charge used for energy evaluation was required to agree with both the source charge and the sum of atomic formal charges.
+Explicit source multiplicities were checked against electron-number parity; otherwise, singlets were assigned only to stored records with even electron counts and no radical electrons.
+Electronic states were assigned from the stored molecular structures; discrepancies with summary descriptions are retained in the accompanying records.
+
+The graph and charge checks leave 99,969 conformers: ten have incomplete molecular graphs, and 21 have inconsistent charge assignments.
+Requiring complete results for every constrained reconstruction gives the 99,488 conformers used in the energy comparisons.
+The accompanying data retain the excluded conformers and the reasons for exclusion.
+% Reference coordinates remain available for all records.
+% The ten incomplete native graphs have undefined reconstructed coordinates and RMSDs, recorded as NaN.
+% The other 99,990 records contribute to the paired Cartesian statistics, while energy statistics use the 99,969 records with valid triplets; both encoders use the same masks.
+
+All neighbors required by each potential were included in the energy evaluation.
+Changing batching, evaluation order, or molecular orientation changed the energies by less than $2\times10^{-4}$ eV.
+Calculations used \texttt{aimnet} 0.2.0 and PyTorch 2.14.1+cpu.
+
+% Earlier calculation notes are retained for author reference; current reported
+% values and numerical controls are those of the fresh matched evaluation above.
+% The 190-conformer pilot included all 31 retained electronic-state and graph exclusions, representative sampled geometries, and high-RMSD cases from the archived sample.
+% For eligible records, native batched energies agreed with separate single-geometry calls to within $2.3842\times10^{-7}$ eV, and a rigid-rotation control changed an energy by at most $7.1465\times10^{-6}$ eV; both were below the declared $2\times10^{-4}$ eV validation tolerance.
+% The calculation used \texttt{aimnet} 0.2.0, PyTorch 2.14.1+cpu, NumPy 2.4.6, SciPy 1.17.1, RDKit 2026.3.6, and h5py 3.16.0.
+% The frozen McUtils coordinate-conversion and quantization source is archived together with the native graph source used for local attachment references.
+% The graph-file SHA-256 digest is
+% \texttt{9be42f86}\allowbreak
+% \texttt{8878c39b}\allowbreak
+% \texttt{8791a04b}\allowbreak
+% \texttt{7787a053}\allowbreak
+% \texttt{eb4eba14}\allowbreak
+% \texttt{2a1baea4}\allowbreak
+% \texttt{d94702c7}\allowbreak
+% \texttt{513529a1}.
+% The archived provenance records the full model and input identities, the exact workflow, and the matched native reconstruction settings.
+
+
+\subsubsection{Distribution Display}
+
+We estimate the distributions using Gaussian kernels with Scott's bandwidth.
+Energy plots show smoothed counts: a density estimate $\widehat p(x)$ is multiplied by the sample size and a common bin width corresponding to 100 equal-width bins.
+The three potentials use the same axes and bin width for each normalization.
+The central plot limits are the outermost points at which any curve reaches 1\% of its own maximum; companion plots show the full observed range.
+All observations are used in the fits and summary statistics.
+
+% Archived numerical comments below are preserved as author notes, not current results.
+% Negative changes occur in 3.452\% of Uniform reconstructions and 13.493\% of Model reconstructions.
+% The maximum absolute changes are 407.363707 and 371.240670 kJ mol$^{-1}$, respectively.
+% The reusable HDF5 records source identifiers, atomic numbers, reference and reconstructed coordinates, the explicit canonical reference Z-matrices, encoding tags, electronic states, flags, all three single-point energies, both signed changes, and the measured RMSDs.
+% The compact NPZ and per-conformer CSV retain every row and allow reanalysis without repeating model evaluations.
+% The manifest and executed plotting notebook preserve the model identities, units, exclusions, statistics, and visible-range diagnostics.
+
+\subsubsection{Accompanying Data}
+
+The accompanying data identify every sampled conformer and provide the available original and reconstructed coordinates, energies, electronic states, and selected models.
+Excluded conformers are retained with the reason for exclusion.
+
+\section{GEOM Paired Cartesian RMSD Experiment}
+\label{sec:geom_rmsd_methods}
+
+For the same 99,990 conformers, adding closure constraints reduces both mean and maximum RMSD for each encoder (Table~\ref{tab:geom_rmsd_statistics}).
+Adaptive has the lowest mean RMSD, $0.0235$ \AA, and maximum RMSD, $0.110$ \AA.
+Figure~\ref{fig:geom_rmsd_full} shows the full observed range.
+
+Small angular errors can displace distant atoms and accumulate along the $Z$-matrix construction sequence.
+Closure constraints limit some of this accumulated distortion while allowing individual coordinates to vary within their encoding intervals.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.5\textwidth]{\RootDirectory/figures/encoding_20261124_geom_rmsd_full.pdf}
+\caption{RMSD distributions for 99,990 GEOM conformers. Blue, green, and pink denote Uniform, Model, and Adaptive. Dashed curves use ordinary reconstruction; solid, filled curves include closure constraints. The vertical axis is probability density per \AA. Adaptive uses the model chosen after constrained reconstruction in both treatments.}
+\label{fig:geom_rmsd_full}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{All-atom RMSD statistics in \AA\ for the same 99,990 conformers. Alignment allows proper rotation and translation, with fixed atom correspondence. Adaptive uses the same model in both treatments. Standard deviations are calculated over the conformer sample.}
+\label{tab:geom_rmsd_statistics}
+\begin{tblr}{width=\linewidth,colspec={X[1.8,l] X[1.2,l] *{4}{X[r]}},colsep=3pt,cells={font=\footnotesize},hline{1,2,5,Z}={0.4pt}}
+Treatment & Encoder & Mean & Std. dev. & 90th pct. & Maximum \\
+Unconstrained & Uniform & 0.0339466 & 0.0121293 & 0.0496826 & 0.18846 \\
+ & Model & 0.0271683 & 0.0115983 & 0.0421608 & 0.136055 \\
+ & Adaptive & 0.0247966 & 0.00918603 & 0.0364874 & 0.11752 \\
+Constrained & Uniform & 0.032327 & 0.0118409 & 0.0476334 & 0.15615 \\
+ & Model & 0.0262607 & 0.011323 & 0.0408769 & 0.136025 \\
+ & Adaptive & 0.0235413 & 0.00864008 & 0.0345743 & 0.109543 \\
+\end{tblr}
+\end{table}
+
+
+\subsection{Sampling, Encoding, and Reconstruction}
+
+We sampled 100,000 conformers from the GEOM drugs dataset, over 68,070 molecules.
+These were sampled from the complete 31,256,395 conformers dataset, covering 304,348 molecules.
+All atoms, including hydrogens, were retained, and the original geometries were not optimized or regenerated.
+This is a separate sample from the heavy-atom eMolecules comparison, to ensure no bias towards a given conformer generation strategy exists.
+
+Uniform uses the standard angular quantizers.
+Model uses the angle Base and unshifted dihedral Base from Tables~\ref{tab:angle_base} and \ref{tab:dihedral_unshifted_base}.
+Both encoders use the same $Z$-matrix references, bond-length quantization, and packed angular precision.
+Only omitted bond lengths are added as constraints.
+
+At encoding, Adaptive reconstructs both candidates with closure constraints and stores the model giving the lower all-atom RMSD, choosing Uniform for an exact tie.
+The paired unconstrained comparison decodes the same stored model without enforcing closure constraints.
+Decoding therefore needs the stored model identifier, not the original geometry.
+
+RMSD uses Eq.~\ref{eq:reconstruction_rmsd} with equal weights for all atoms and fixed atom correspondence.
+Gaussian kernel density estimates use Scott's bandwidth and include every available RMSD.
+The central display ends at $0.0821$ \AA; the full-range plot extends to the largest observed value, $0.188460$ \AA.
+
+% For every conformer with a complete native graph, McUtils RDMolecule and ConformerEncoder constructed, encoded, decoded, and reconstructed the canonical internal geometry.
+% The graph traversal uses local attachment references with validation enabled, and both encoding and decoding receive the same explicit reference Z-matrix.
+% All 100,000 reference geometries and atomic-number arrays exactly matched the archived sample.
+% Ten incomplete native graphs remain flagged, with reconstructed coordinates and RMSDs stored as NaN; the paired Cartesian population therefore contains 99,990 conformers.
+% The 21 electronic-state inconsistencies exclude energy evaluations but do not exclude their finite Cartesian reconstructions.
+% The sampled cap on individual angular errors does not establish a general bound on Cartesian displacement after propagation through the coordinate chain.
+% Its shared maximum bin height is 1,438, and the 1\% threshold is 14.38 counts.
+% The displayed right edge, $0.082000$ \AA, is one bin beyond the last bin where either series reaches this threshold.
+% The window omits 370 Uniform and 185 Model reconstructions beyond that edge.
+% Every subsequent bin is below the threshold; this display rule does not remove any value from statistics.
+% The full-range companion uses 240 common bins and includes all 99,990 valid values from each model; the ten unavailable reconstructions remain flagged in the complete saved sample.
+
+\section{Per-Atom GEOM Reconstruction Energy Changes}
+\label{sec:geom_energy_per_atom}
+
+To compare molecules of different sizes, each signed energy change is divided by that conformer's own stored atom count $N_i$, including every explicit hydrogen:
+\begin{equation}
+ \delta\varepsilon_i^{(p,c,d)}=\frac{\Delta E_i^{(p,c,d)}}{N_i}.
+ \label{eq:geom_energy_per_atom}
+\end{equation}
+The mean absolute energy change per atom is $M^{-1}\sum_i|\Delta E_i|/N_i$, where $M=99{,}488$.
+Each conformer's energy change is divided by its own atom count before the statistics are calculated.
+
+The per-atom distributions normalize the same signed energy differences, conformers and model choices defined in Section~\ref{sec:geom_energy_methods}.
+Table~\ref{tab:geom_energy_per_atom_statistics} and Figs.~\ref{fig:geom_energy_per_atom_distribution} and~\ref{fig:geom_energy_per_atom_tails} retain all 99,488 matched records and their full observed tails.
+
+\begin{sidewaystable}[p]
+\centering
+\caption{Absolute reconstruction energy changes per atom, $|\Delta E_i|/N_i$, in kJ mol$^{-1}$ atom$^{-1}$, for 99,488 conformers. Each atom count $N_i$ includes hydrogens. MAE, P10, P90, and Max.\ describe these absolute per-atom values, with definitions as in Table~\ref{tab:geom_energy_statistics}. Count is the number with $|\Delta E_i|/N_i>0.15$ kJ mol$^{-1}$ atom$^{-1}$. Adaptive selects models separately for each treatment; Default denotes AIMNet2 $\omega$B97M-D3.}
+\label{tab:geom_energy_per_atom_statistics}
+\begin{tblr}{width=\linewidth,colspec={Q[l] Q[l] *{4}{X[r]} Q[r] *{4}{X[r]} Q[r]},colsep=3pt,rowsep=3pt,cells={font=\small},row{1,2}={font=\bfseries},hline{1,3,6,9,Z}={0.4pt},vline{3,8}={0.3pt}}
+\SetCell[r=2]{l} Potential & \SetCell[r=2]{l} Encoder & \SetCell[c=5]{c} Without closure constraints &  &  &  &  & \SetCell[c=5]{c} With closure constraints &  &  &  &  \\
+ &  & MAE & P10 & P90 & Max. & \shortstack{Count\\$>0.15$} & MAE & P10 & P90 & Max. & \shortstack{Count\\$>0.15$} \\
+NSE & Uniform & 0.0500 & 0.0137 & 0.0923 & 1.80 & 1441 & 0.0268 & 0.00609 & 0.0501 & 0.593 & 208 \\
+ & Model & 0.0242 & 0.00328 & 0.0516 & 1.66 & 503 & 0.0169 & 0.00245 & 0.0353 & 0.535 & 130 \\
+ & Adaptive & 0.0284 & 0.00392 & 0.0621 & 1.11 & 427 & 0.0180 & 0.00276 & 0.0373 & 0.379 & 43 \\
+B97-3c & Uniform & 0.0492 & 0.0130 & 0.0913 & 1.75 & 1375 & 0.0272 & 0.00598 & 0.0512 & 0.543 & 233 \\
+ & Model & 0.0243 & 0.00319 & 0.0522 & 1.73 & 518 & 0.0174 & 0.00243 & 0.0364 & 0.493 & 135 \\
+ & Adaptive & 0.0282 & 0.00379 & 0.0620 & 1.10 & 398 & 0.0183 & 0.00275 & 0.0383 & 0.313 & 45 \\
+Default & Uniform & 0.0501 & 0.0138 & 0.0921 & 1.93 & 1404 & 0.0270 & 0.00628 & 0.0502 & 0.645 & 180 \\
+ & Model & 0.0243 & 0.00336 & 0.0514 & 1.79 & 481 & 0.0170 & 0.00254 & 0.0351 & 0.505 & 106 \\
+ & Adaptive & 0.0285 & 0.00398 & 0.0621 & 1.08 & 407 & 0.0181 & 0.00284 & 0.0374 & 0.303 & 32 \\
+\end{tblr}
+\end{sidewaystable}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_atom_main.pdf}
+\caption{Signed reconstruction energy changes divided by each conformer's atom count, including hydrogens. The potentials, colors, and line styles are those of Fig.~\ref{fig:geom_energy_distribution}. All panels use 99,488 conformers and show smoothed counts.}
+\label{fig:geom_energy_per_atom_distribution}
+\end{figure}
+
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_atom_full.pdf}
+\caption{The per-atom distributions in Fig.~\ref{fig:geom_energy_per_atom_distribution} shown over their full observed ranges.}
+\label{fig:geom_energy_per_atom_tails}
+\end{figure}
+\clearpage
+
+
+\section{Z-Matrix Chain Normalization of Reconstruction Energies}
+\label{sec:geom_energy_chain}
+
+To examine how energy changes depend on the length of the $Z$-matrix construction, we also normalize by the tree defined by its distance references.
+Each placed atom is connected to the earlier atom that specifies its stored distance.
+We define $L_i$ as the largest number of edges on a path between any two atoms in this tree, and $D_i$ as the largest number of edges from the first atom to any other atom.
+Both include hydrogens.
+These lengths can differ from the longest chain in the molecular bond graph because ring-closing bonds are absent from the reference tree.
+
+The two normalizations are
+\begin{equation}
+\varepsilon_{i,L}=\Delta E_i/L_i,\qquad
+\varepsilon_{i,D}=\Delta E_i/D_i,
+\end{equation}
+with the potential, encoder and reconstruction indices of $\Delta E$ suppressed.
+Division precedes all equally weighted statistics and distribution fits.
+We use the same 99,488 conformers and treatment-specific Adaptive choices as in Section~\ref{sec:geom_energy_methods}.
+The median $L_i$ is 19 reference steps (range 6--45); the median $D_i$ is 16 (range 4--43).
+
+Model retains a lower mean absolute normalized change than Uniform under both definitions, while RMSD-selected Adaptive need not minimize that energetic statistic.
+For example, constrained NSE MAEs per longest-tree-path step are 0.0745, 0.0473 and 0.0502 kJ mol$^{-1}$ for Uniform, Model and Adaptive.
+
+\begin{sidewaystable}[p]
+\centering
+\caption{Absolute reconstruction energy changes divided by $L_i$, the longest path in the tree of $Z$-matrix distance references, in kJ mol$^{-1}$ per edge. All 99,488 conformers are included. Statistical abbreviations follow Table~\ref{tab:geom_energy_statistics} and apply to $|\Delta E_i|/L_i$. The tree includes hydrogens. Adaptive selects models separately for each treatment; Default denotes AIMNet2 $\omega$B97M-D3.}
+\label{tab:geom_energy_longest_tree_path}
+\begin{tblr}{width=\linewidth,colspec={Q[l] Q[l] *{8}{X[r]}},colsep=3pt,rowsep=3pt,cells={font=\small},row{1,2}={font=\bfseries},hline{1,3,6,9,Z}={0.4pt},vline{3,7}={0.3pt}}
+\SetCell[r=2]{l} Potential & \SetCell[r=2]{l} Encoder & \SetCell[c=4]{c} Without closure constraints &  &  &  & \SetCell[c=4]{c} With closure constraints &  &  &  \\
+ &  & MAE & P10 & P90 & Max. & MAE & P10 & P90 & Max. \\
+NSE & Uniform & 0.138 & 0.0371 & 0.257 & 5.54 & 0.0745 & 0.0163 & 0.142 & 1.75 \\
+ & Model & 0.0682 & 0.00866 & 0.147 & 7.16 & 0.0473 & 0.00654 & 0.100 & 1.62 \\
+ & Adaptive & 0.0796 & 0.0104 & 0.176 & 3.82 & 0.0502 & 0.00736 & 0.106 & 1.27 \\
+B97-3c & Uniform & 0.136 & 0.0350 & 0.254 & 5.37 & 0.0757 & 0.0161 & 0.145 & 1.73 \\
+ & Model & 0.0683 & 0.00843 & 0.148 & 6.55 & 0.0486 & 0.00648 & 0.104 & 1.47 \\
+ & Adaptive & 0.0791 & 0.00995 & 0.176 & 3.79 & 0.0513 & 0.00730 & 0.109 & 0.951 \\
+Default & Uniform & 0.139 & 0.0374 & 0.256 & 5.93 & 0.0751 & 0.0168 & 0.142 & 1.88 \\
+ & Model & 0.0684 & 0.00887 & 0.147 & 7.03 & 0.0476 & 0.00670 & 0.0999 & 1.56 \\
+ & Adaptive & 0.0799 & 0.0105 & 0.176 & 3.72 & 0.0507 & 0.00755 & 0.106 & 0.921 \\
+\end{tblr}
+\end{sidewaystable}
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_tree_diameter_main.pdf}
+\caption{Central distributions of signed energy changes divided by $L_i$, the longest path in the tree of distance references. Potentials, colors, and line styles follow Fig.~\ref{fig:geom_energy_distribution}; all 99,488 conformers contribute.}
+\label{fig:geom_energy_longest_tree_path}
+\end{figure}
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_tree_diameter_full_tails.pdf}
+\caption{Full observed ranges of signed energy changes divided by $L_i$, the longest path in the tree of distance references. Potentials, colors, and line styles follow Fig.~\ref{fig:geom_energy_distribution}; all 99,488 conformers contribute.}
+\label{fig:geom_energy_longest_tree_path_full}
+\end{figure}
+\clearpage
+\begin{sidewaystable}[p]
+\centering
+\caption{Absolute reconstruction energy changes divided by $D_i$, the maximum number of reference edges from the first $Z$-matrix atom to any other atom, in kJ mol$^{-1}$ per edge. All 99,488 conformers are included. Statistical abbreviations follow Table~\ref{tab:geom_energy_statistics} and apply to $|\Delta E_i|/D_i$. The tree includes hydrogens. Adaptive selects models separately for each treatment; Default denotes AIMNet2 $\omega$B97M-D3.}
+\label{tab:geom_energy_root_depth}
+\begin{tblr}{width=\linewidth,colspec={Q[l] Q[l] *{8}{X[r]}},colsep=3pt,rowsep=3pt,cells={font=\small},row{1,2}={font=\bfseries},hline{1,3,6,9,Z}={0.4pt},vline{3,7}={0.3pt}}
+\SetCell[r=2]{l} Potential & \SetCell[r=2]{l} Encoder & \SetCell[c=4]{c} Without closure constraints &  &  &  & \SetCell[c=4]{c} With closure constraints &  &  &  \\
+ &  & MAE & P10 & P90 & Max. & MAE & P10 & P90 & Max. \\
+NSE & Uniform & 0.163 & 0.0420 & 0.309 & 5.75 & 0.0875 & 0.0188 & 0.169 & 1.81 \\
+ & Model & 0.0803 & 0.00996 & 0.174 & 7.41 & 0.0556 & 0.00751 & 0.119 & 2.43 \\
+ & Adaptive & 0.0939 & 0.0118 & 0.210 & 4.00 & 0.0591 & 0.00840 & 0.126 & 1.31 \\
+B97-3c & Uniform & 0.160 & 0.0396 & 0.305 & 5.57 & 0.0888 & 0.0185 & 0.172 & 1.78 \\
+ & Model & 0.0803 & 0.00966 & 0.176 & 6.73 & 0.0571 & 0.00742 & 0.122 & 2.21 \\
+ & Adaptive & 0.0933 & 0.0114 & 0.209 & 3.97 & 0.0603 & 0.00835 & 0.129 & 0.994 \\
+Default & Uniform & 0.163 & 0.0422 & 0.308 & 6.15 & 0.0883 & 0.0193 & 0.170 & 1.94 \\
+ & Model & 0.0806 & 0.0102 & 0.175 & 7.27 & 0.0560 & 0.00768 & 0.119 & 2.41 \\
+ & Adaptive & 0.0943 & 0.0120 & 0.209 & 3.90 & 0.0596 & 0.00866 & 0.126 & 0.963 \\
+\end{tblr}
+\end{sidewaystable}
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_root_depth_main.pdf}
+\caption{Central distributions of signed energy changes divided by $D_i$, the maximum depth of the tree of distance references. Potentials, colors, and line styles follow Fig.~\ref{fig:geom_energy_distribution}}
+\label{fig:geom_energy_root_depth}
+\end{figure}
+\clearpage
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_energy_per_root_depth_full_tails.pdf}
+\caption{Full observed ranges of signed energy changes divided by $D_i$, the maximum depth of the tree of distance references. Potentials, colors, and line styles follow Fig.~\ref{fig:geom_energy_distribution}}
+\label{fig:geom_energy_root_depth_full}
+\end{figure}
+\clearpage
+
+\section{Decode Timing Comparison}
+\label{sec:geom_decode_timings}
+
+Adding closure constraints increases mean Model decode time from 11.9 to 63.3 ms (Table~\ref{tab:geom_decode_timings}).
+Both measurements include reading the encoded coordinates and constructing the Cartesian geometry.
+The constrained calculation also includes recovering quantization intervals, optimization, and the final coordinate checks.
+Adaptive timing includes decoding only the stored model; model selection occurs during encoding.
+Graph construction, model loading, reading files, and comparison with the original geometry are excluded from the timings.
+
+Both encoders successfully decode all 99,990 conformers with complete molecular graphs.
+The timing statistics include every call, including encoder initialization and unusually long calculations.
+Figure~\ref{fig:geom_decode_timing_startup} shows how excluding initialization affects the tail.
+The optimizer is not called for the 1,682 conformers without closure constraints.
+Each calculation used two CPU threads, NumPy 2.4.6, and SciPy 1.17.1.
+
+\begin{table}[htbp]
+\centering
+\caption{Decoding times in milliseconds for 99,990 conformers per row, including initialization and all long calculations. Adaptive decodes only its stored model, which is held fixed between treatments. The table gives the mean, standard deviation, 90th percentile, and maximum over calls, rounded to three significant figures.}
+\label{tab:geom_decode_timings}
+\begin{tblr}{width=\linewidth,colspec={X[1.8,l] X[1.2,l] *{4}{X[r]}},colsep=3pt,cells={font=\footnotesize},hline{1,2,5,Z}={0.4pt}}
+Treatment & Encoder & Mean & Std. dev. & 90th pct. & Maximum \\
+Unconstrained & Uniform & 11.8 & 2.42 & 14.5 & 38.0 \\
+ & Model & 11.9 & 2.43 & 14.6 & 44.3 \\
+ & Adaptive & 11.9 & 2.43 & 14.5 & 44.3 \\
+Constrained & Uniform & 67.0 & 167 & 74.9 & $5.05\times10^{3}$ \\
+ & Model & 63.3 & 133 & 71.5 & $3.42\times10^{3}$ \\
+ & Adaptive & 64.5 & 146 & 72.6 & $4.99\times10^{3}$ \\
+\end{tblr}
+\end{table}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_decode_time_main.pdf}
+\caption{Decoding times for Uniform (blue), Model (green), and Adaptive (pink). Dashed curves use ordinary reconstruction; solid, filled curves include closure constraints. All 99,990 conformers contribute. Kernel estimates are fitted to $\log_{10}$ time and scaled to counts in equal-width intervals of log time.}
+\label{fig:geom_decode_timing}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_decode_time_full.pdf}
+\caption{The distributions in Fig.~\ref{fig:geom_decode_timing} shown over the full observed time range, including initialization and the longest calculations.}
+\label{fig:geom_decode_timing_full}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261124_geom_decode_time_survival.pdf}
+\caption{Fraction of constrained decodes taking longer than the indicated time. Blue denotes Uniform and green Model. Dashed curves include all 99,990 calls; solid curves exclude initialization calls, leaving 99,783 Uniform and 99,790 Model decodes. Both axes are logarithmic.}
+\label{fig:geom_decode_timing_startup}
+\end{figure}
+
+% Earlier normalized-calculation comments are retained as author notes only.
+% The fraction of conformers improved by Model is 79.154\%, since both paired absolute changes are divided by the same positive $N_i$.
+% The probe width is 0.00129897 kJ mol$^{-1}$ atom$^{-1}$, its maximum height is 3,406, and its 1\% threshold is 34.06 counts.
+% The displayed range is $[-0.045464,0.172763]$ kJ mol$^{-1}$ atom$^{-1}$, omitting 988 Uniform and 717 Model values from the view.
+
+\section{Initial-Geometry Energy Comparisons Across AIMNet2 Models}
+\label{sec:geom_reference_models}
+
+On the original GEOM structures, default AIMNet2 and NSE differ by a mean absolute energy of 5.9 kJ mol$^{-1}$; AIMNet2-2025 (B97-3c) and NSE differ by about 3825 kJ mol$^{-1}$ (Table~\ref{tab:geom_reference_model_total}).
+These comparisons include composition-dependent differences between the training reference methods.
+By contrast, a reconstruction energy change compares two geometries of the same molecule within one potential, so composition-dependent offsets cancel.
+
+For potential $p\in\{\mathrm{2025},\mathrm{default}\}$ and original geometry $\mathbf R_i$, we define
+\begin{equation}
+ D_i^{(p)}=E_p(\mathbf R_i;q_i,m_i)-E_{\mathrm{NSE}}(\mathbf R_i;q_i,m_i),
+ \qquad d_i^{(p)}=D_i^{(p)}/N_i,
+ \label{eq:geom_reference_model_differences}
+\end{equation}
+where $N_i$ includes every stored hydrogen.
+Both potentials see the same geometry and electronic state, and no constant, composition-dependent, or fitted offsets have been removed.
+Division by atom count does not align composition-dependent baselines (Table~\ref{tab:geom_reference_model_per_atom}).
+These distributions describe disagreement among potentials on the sampled structures.
+
+\begin{table}[htbp]
+\centering
+\caption{Absolute differences between potential energies on 99,969 original GEOM structures, in kJ mol$^{-1}$. Differences are taken relative to NSE, as defined in Eq.~\ref{eq:geom_reference_model_differences}. MAE, P10, P90, and Max.\ describe $|D|$.}
+\label{tab:geom_reference_model_total}
+\begin{tblr}{width=\linewidth,colspec={X[1.4,l] X[r] X[r]},colsep=3pt,cells={font=\small},hline{1,2,Z}={0.4pt}}
+Statistic & 2025 $-$ NSE & Default $-$ NSE \\
+MAE & $3.82\times10^{3}$ & 5.92 \\
+P10 & $2.77\times10^{3}$ & 0.869 \\
+P90 & $4.88\times10^{3}$ & 12.4 \\
+Max. & $1.36\times10^{4}$ & 112 \\
+\end{tblr}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Absolute differences between potential energies per atom, in kJ mol$^{-1}$ atom$^{-1}$, for the same 99,969 structures. Each difference from NSE is divided by that conformer's atom count, including hydrogens, before the statistics of $|d|$ are calculated.}
+\label{tab:geom_reference_model_per_atom}
+\begin{tblr}{width=\linewidth,colspec={X[1.4,l] X[r] X[r]},colsep=3pt,cells={font=\small},hline{1,2,Z}={0.4pt}}
+Statistic & 2025 $-$ NSE & Default $-$ NSE \\
+MAE & 74.4 & 0.113 \\
+P10 & 60.7 & 0.0178 \\
+P90 & 90.0 & 0.233 \\
+Max. & 196 & 0.912 \\
+\end{tblr}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261019_reference_model_energy_comparison.pdf}
+\caption{Energy differences on original GEOM structures: AIMNet2-2025 (B97-3c) minus NSE on the left, and default AIMNet2 ($\omega$B97M-D3) minus NSE on the right. Top panels show total differences; bottom panels divide each difference by the number of atoms, including hydrogens. Each histogram uses 100 bins. No offsets are removed from the model energies.}
+\label{fig:geom_reference_model_histograms}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{\RootDirectory/figures/encoding_20261019_reference_model_energy_full_tails.pdf}
+\caption{Fraction of original GEOM structures with an absolute inter-potential energy difference at least as large as the horizontal-axis value. The left panel uses $|D|$; the right uses the per-atom difference $|d|$. Each curve includes all 99,969 conformers. Both axes are logarithmic.}
+\label{fig:geom_reference_model_tails}
+\end{figure}
+
+\subsection{Matched Structures and Numerical Controls}
+
+This comparison uses the 99,969 original all-atom GEOM structures that pass the graph and charge checks in Sec.~\ref{sec:geom_energy_methods}.
+All evaluated structures are singlets.
+The same coordinates, atomic numbers, charge, and multiplicity are supplied to all three potentials, without geometry optimization.
+
+All evaluations use the member-0 checkpoints and calculation settings specified in Sec.~\ref{sec:geom_energy_methods}, without ensemble averaging.
+NSE and default target the same nominal $\omega$B97M-D3 reference family but are distinct fitted models, whereas the 2025 potential targets B97-3c.\cite{AIMNet2-NSE,AIMNet2,AIMNetCentralModelGuide}
+The NSE reference uses the $\omega$B97M range-separated hybrid meta-GGA, D3 dispersion with Becke--Johnson damping, and the def2-TZVPP basis.
+Neighbor-list completeness and numerical agreement were checked as described in Sec.~\ref{sec:geom_energy_methods}.
+
+\subsection{Distribution Display and Complete-Tail Statistics}
+
+Energy differences use the conversion given in Sec.~\ref{sec:geom_energy_methods}.
+Each conformer is weighted equally, and per-atom differences are calculated before averaging.
+Central plot limits are selected from a preliminary histogram, extending to the outermost bins with at least 1\% of the peak count.
+The plotted histograms use 100 equal-width bins within these limits.
+Tables~\ref{tab:geom_reference_model_total} and \ref{tab:geom_reference_model_per_atom} and Fig.~\ref{fig:geom_reference_model_tails} include all 99,969 conformers.
+
+\subsection{Accompanying Data}
+
+The accompanying data retain all sampled conformer identifiers, coordinates, atomic numbers, and electronic states.
+They provide the available model energies and energy differences, with missing evaluations identified explicitly.
+
+\section{Substructure Coverage and Its Interpretation}
+\label{sec:similarity_methods}
+
+We measure the fraction of one conformer's atoms that can be matched to substructures in another conformer.
+Let $m(A,B)$ be the number of distinct atoms of conformer $A$ included in accepted matches with conformer $B$, and let $N_A$ be the number of heavy atoms in $A$.
+The score is $S(A,B)=m(A,B)/N_A$, retaining only matches with at least four atoms.
+The denominator depends on the first conformer, and the matching search is repeated in each order, so $S(A,B)$ and $S(B,A)$ can differ.
+The pyrazole and benzene examples show that matches can span conventional functional-group boundaries.
+
+The distributions of $S(A,B)$ and $S(B,A)$ are nearly identical as seen in Figure~\ref{fig:similarity_directions}, each with mean 0.549 and standard deviation 0.196.
+Nevertheless, the two scores differ for 96.5\% of pairs.
+The mean absolute difference between $S(A,B)$ and $S(B,A)$ is 0.113, and the maximum absolute difference is 0.774.
+Of the 20 million scores, 2.13\% are zero and 0.0540\% are one.
+
+\subsection{Sampling and Matching Criterion}
+
+The similarity calculation uses the same 10,000 eMolecules molecules, with all 100 generated conformers per molecule before RMSD pruning.
+We sampled ten million different unordered pairs without replacement from these one million heavy-atom conformers, excluding self-pairs.
+Different conformers of the same molecule could form a pair.
+Each search was performed twice, with the conformers in opposite orders, and both scores were retained.
+
+Matched atoms must have the same element and, when both are specified, the same incoming bond order.
+Bond lengths and bond angles are not compared.
+We search the encoded molecular trees for matches starting at any atom pair, without requiring consecutive matched entries in the atom sequences.
+Matches involving the same atom set in either conformer are treated as duplicates.
+At the start of a match the torsion condition is not applied.
+Elsewhere, let $d=|k_A-k_B|$ be the difference between the encoded torsion values.
+The implemented condition is $d<15$ or $d-127<10$ or $d>240$.
+Because the middle inequality is equivalent to $d<137$, this accepts a much broader range than a narrow angular window around $180^\circ$.
+The histograms use 100 equal bins over $[0,1]$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.95\textwidth]{\RootDirectory/figures/encoding_20261013_similarity_directions.pdf}
+\caption{Distributions of the matching scores $S(A,B)$ and $S(B,A)$ for ten million eMolecules conformer pairs. Each score is the fraction of atoms in its first conformer covered by accepted matches with the second. The two histograms use 100 equal bins over $[0,1]$. Although the distributions are similar, the scores differ for 96.5\% of individual pairs.}
+\label{fig:similarity_directions}
+\end{figure}
+
+\begin{figure}[ht]
+\begin{center}
+    \includegraphics[width=1.0\textwidth]{\RootDirectory/figures/fingerprint.png}
+    \caption{Molecular partitions corresponding to the substructure matches illustrated in the main text.}
+\label{fig:fingerprint_partitions}
+\end{center}
+\end{figure}
+
+\clearpage
+\section{Network Architecture for Stereochemical Learning}
+\label{sec:ml_settings}
+\label{sec:ml_architecture}
+
+The four torsion selections in the main-text learning figure use the released ChIRo R/S network.\cite{Coley2021:chiro}
+This is a graph message-passing model: 52-component atom and 14-component bond descriptors enter an edge-conditioned convolution with 64 output components, followed by three graph-attention layers of widths 32, 32, and 64, each averaging four attention heads.
+Explicit stereochemical labels are excluded from the input descriptors.
+As in the original ChIRo R/S model, we omit the optional additional message-passing stage conditioned on the torsion embedding.
+
+The learned atom vectors are then combined with distances, bond angles, and torsions in three separate network branches.
+For each torsion quartet $t$, shared networks acting on the four atom embeddings in forward and reverse order produce a sigmoid weight $c_t$ and a normalized two-component phase vector with angle $\phi_t$.
+Torsions sharing a central atom pair $b$ are combined through
+\begin{equation}
+ r_b=\left\lVert\sum_{t\in\mathcal T_b}c_t
+ \begin{pmatrix}\cos(\psi_t+\phi_t)\\\sin(\psi_t+\phi_t)\end{pmatrix}\right\rVert_2.
+ \label{eq:ml_native_radius}
+\end{equation}
+Each magnitude $r_b$ and the vectors for its two central atoms are mapped to a 64-component vector; these vectors are summed over central atom pairs.
+Distances and sine/cosine pairs of bond angles likewise give separate 64-component molecular sums.
+Forward/reverse contributions are added in each branch.
+Concatenating these three vectors with the summed 64-component atom embedding gives 256 classifier inputs, followed by hidden layers of widths 64 and 64 and one binary-classification logit.
+The distance, angle, weight, and $r_b$ networks each have two hidden layers of width 128; the phase network has two of width 256, and the edge-conditioning network has one of width 64.
+These multilayer perceptrons use leaky-ReLU hidden activations with slope 0.01 and no dropout.
+
+Our comparison retains this architecture while changing the geometry supplied to it and the selected torsion quartets.
+All four models use the same molecular graph; their distances and bond angles come from the same decoded coordinates.
+Complete uses torsions from the molecular bond graph.
+Minimal uses coupled torsions around stereocenters.
+Augmented adds the canonical $Z$-matrix torsions whose central atom pairs are not already represented in Minimal.
+The $Z$-matrix model uses only the torsions stored in that $Z$-matrix.
+Canonical reference quartets can contain nonbonded reference pairs, so Augmented need not be a subset of Complete.
+Minimal reduces the torsion inputs but still uses all atom features through graph message passing, together with the full distance and bond-angle inputs.
+The torsion-only classifier receives just the 64-component torsion vector, although the atom vectors from the graph network still determine its weights and phases.
+The reduced-descriptor control retains element, total degree, hydrogen count, and aromaticity, setting other atom and all bond descriptors to zero; the additional-discretization control uniformly quantizes selected torsions to eight bits.
+These controls preserve the network widths.
+
+\section{Reduced-Network Stereochemical Learning Comparisons}
+\label{sec:ml_reduced_settings}
+
+These experiments use a reduced network, distinct from the ChIRo network used in the main-text validation curves (Sec.~\ref{sec:ml_architecture}). They compare torsion selections and classifier inputs using the architecture described below.
+
+This exploratory comparison asks how much torsional context is useful for learning an R/S configuration label.
+The chemical motivation for a local feature set is that rotations of distant bonds need not change a stereocenter's configuration.
+Torsions near a stereocenter describe its local three-dimensional arrangement; supplying additional torsions also describes conformational changes elsewhere in the molecule.
+The models adapt the stereochemical architecture of Coley and coworkers.\cite{Coley2021:chiro}
+
+\subsection{Feature Definitions and Readouts}
+
+The adapted model uses the same graph backbone for all feature sets: four atom features (atomic number, total hydrogen count, degree, and aromaticity), a projection to 32 components, and two graph-attention layers with four heads.
+No explicit chiral label is included in the atom features.
+Complete reconstructs Cartesian coordinates from an encoded conformer annotation and enumerates the torsion quartets about each eligible bond.
+Minimal reconstructs the atoms needed for torsions around stereocenters, together with the atoms required as their $Z$-matrix references.
+Augmented adds the canonical $Z$-matrix torsions for central bonds absent from the local coupled-torsion set; bonds already represented in that set are omitted from the added set.
+This operation adds canonical torsions, not a complete enumeration of every quartet about the added bonds.
+The Cartesian feature path is therefore not an unquantized-coordinate control.
+
+For each selected quartet, the four graph embeddings and their reverse ordering determine a learned weight $c_t\in(0,1)$ and a learned two-component unit phase vector with angle $\phi_t$.
+For each central atom pair $b$, let $\mathcal T_b$ contain the selected torsion quartets with that middle pair, and let $\psi_t$ be the angle for quartet $t$.
+The coupled-torsion readout is
+\begin{equation}
+ \mathbf a_b=\sum_{t\in\mathcal T_b}c_t
+ \begin{pmatrix}\cos(\psi_t+\phi_t)\\\sin(\psi_t+\phi_t)\end{pmatrix},
+ \qquad
+ \mathbf z_\alpha=\sum_b\mathbf a_b.
+ \label{eq:ml_torsion_readout}
+\end{equation}
+The vector $\mathbf a_b$ sums the weighted sine and cosine contributions for one central atom pair; $\mathbf z_\alpha$ sums these vectors over the molecule.
+For quantized torsions, the sine and cosine are read from a table indexed by the encoded value, rather than recalculated from reconstructed Cartesian coordinates.
+The default classifier receives only the two-component $\mathbf z_\alpha$.
+
+The alternative classifier input is
+\begin{equation}
+ \mathbf z_{\mathrm{latent}}=
+ [\overline{\mathbf h}\,;\,\mathbf z_\alpha],\qquad
+ \overline{\mathbf h}=\frac{1}{N}\sum_{i=1}^{N}\mathbf h_i,
+ \label{eq:ml_latent_readout}
+\end{equation}
+where $\mathbf h_i$ is the 32-component graph embedding of atom $i$.
+Concatenating the mean graph embedding and torsion summary gives 34 classifier inputs instead of two.
+Graph information already determines the torsional weights and phases; this readout also supplies it directly to the classifier.
+The classifier has two hidden layers of width 128 with leaky-ReLU activations and two output logits.
+Because these atom features contain no R/S label, the graph vectors alone cannot distinguish enantiomers with otherwise identical connectivity and features.
+
+The classifier receives a two-component sum, rather than a separate input for each torsion.
+Contributions from torsions far from a stereocenter can cancel contributions from nearby torsions.
+This could contribute to Augmented's lower accuracy when the classifier receives only $\mathbf z_\alpha$.
+
+\subsection{Training Settings and Scope}
+
+Training minimizes cross entropy plus
+\begin{equation}
+ \lambda\,\frac{1}{B}\sum_{b=1}^{B}
+ \left|1-\lVert\mathbf a_b\rVert\right|,
+ \label{eq:ml_auxiliary_loss}
+\end{equation}
+where $B$ is the number of central atom pairs represented in the batch.
+The auxiliary loss penalizes deviations of $\lVert\mathbf a_b\rVert$ from one for each pair.
+The vectors can still cancel when summed over different pairs.
+Optimization uses Adam, batches of 32 conformers, gradient-norm clipping at 10, and a target of 50 epochs.
+The default learning rate is $10^{-3}$ and the default auxiliary weight is $0.02$; additional runs use the alternatives listed in Table~\ref{tab:ml_curve_settings}.
+Runs were subject to a scheduler allowance of 82 hours, so several traces end before 50 complete epochs.
+Model selection uses validation cross entropy alone.
+All accuracies reported in this subsection are training accuracies.
+
+\subsection{Comparison of Training Behavior}
+
+At learning rate $10^{-3}$, Complete runs C1--C3 end at $80.9$--$82.7\%$ training accuracy after approximately $337{,}000$--$394{,}000$ plotted batches.
+Minimal runs M1 and M3 reach $94.2\%$ and $92.2\%$ at $510{,}000$ batches, while M2 ends at $50.4\%$ after an initial increase.
+At the common position of $102{,}000$ batches, the two successful Minimal runs reach $84.8$--$90.1\%$, compared with $74.9$--$77.9\%$ for Complete.
+
+Augmented runs A1--A3, with only $\mathbf z_\alpha$ as classifier input, end at $59.4$--$61.6\%$ after approximately $508{,}000$--$510{,}000$ batches.
+Runs A7 and A8 use Augmented torsions at learning rate $10^{-3}$ and add the mean atom vector to the classifier input, as defined in Eq.~\ref{eq:ml_latent_readout}.
+With $\lambda=0.02$, A8 reaches $67.1\%$ at approximately $490{,}000$ batches.
+Run A7 uses $\lambda=0.1$ and reaches $73.5\%$ at approximately $478{,}000$ batches, about $12$--$14$ percentage points above runs A1--A3.
+Each of these two settings is represented by one run.
+
+At learning rate $10^{-2}$, runs C4, M4, and A4--A6 remain near $50\%$ training accuracy.
+A5 uses auxiliary weight $0.1$; A6 also adds the mean atom vector to the classifier input. Both remain near $50\%$ training accuracy.
+
+\subsection{Definition of the Training Curves}
+
+Curves use the last logged running training accuracy in each epoch, with the first log entry as the initial point.
+Logging occurs every 100 batches; the batch index is obtained by adding the last logged batch counts from each epoch.
+Partial epochs are included.
+Table~\ref{tab:ml_curve_settings} lists the settings and final logged training values for all sixteen runs.
+
+\begin{table}[htbp]
+\centering
+\caption{Settings and final logged training accuracies for the reduced network. C, M, and A identify Complete, Minimal, and Augmented torsion selections. Batch numbers follow the logging convention described above.}
+\label{tab:ml_curve_settings}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{llrrrr}
+\hline
+Run & Readout & Learning rate & $\lambda$ & Last batch & Accuracy \\
+\hline
+C1 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 393,700 & 0.809 \\
+C2 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 336,600 & 0.827 \\
+C3 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 357,000 & 0.816 \\
+C4 & $\mathbf z_\alpha$ & $10^{-2}$ & 0.02 & 365,000 & 0.502 \\
+M1 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 510,000 & 0.942 \\
+M2 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 510,000 & 0.504 \\
+M3 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 510,000 & 0.922 \\
+M4 & $\mathbf z_\alpha$ & $10^{-2}$ & 0.02 & 510,000 & 0.501 \\
+A1 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 510,000 & 0.606 \\
+A2 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 508,200 & 0.616 \\
+A3 & $\mathbf z_\alpha$ & $10^{-3}$ & 0.02 & 510,000 & 0.594 \\
+A4 & $\mathbf z_\alpha$ & $10^{-2}$ & 0.02 & 510,000 & 0.502 \\
+A5 & $\mathbf z_\alpha$ & $10^{-2}$ & 0.10 & 488,400 & 0.501 \\
+A6 & Latent & $10^{-2}$ & 0.10 & 490,600 & 0.500 \\
+A7 & Latent & $10^{-3}$ & 0.10 & 477,700 & 0.735 \\
+A8 & Latent & $10^{-3}$ & 0.02 & 489,900 & 0.671 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% The existing training-curve caption in Paper.tex refers to optical rotation and an A1 GPU;
+% the Results outline specifies R/S prediction and an A100 GPU. Resolve the caption separately.
+
+% Earlier Results outlines retained as drafting notes, not as measured results.
+% Storage: graph replacement savings, 32-bit reconstruction accuracy, and final archive sizes
+% were placeholders and require measured totals before inclusion.
+% Distribution encoding: the older hand-tuned/10,000-conformer outline reported RMSD maxima
+% increasing from 0.5 to 1.8 Angstrom and counts above 0.2 Angstrom increasing from 3 to 10.
+% Those preliminary numbers are distinct from the current 100,000-conformer GEOM benchmark.
+% Fingerprinting: the earlier illustrative outline used 100 SMILES, nominal 20-degree or
+% 170--180-degree torsion windows, and an unspecified number of top matches.
+% The measured population and literal implemented predicate are documented above.
+% Future ML work in the earlier outline: examine discretization independently and identify
+% a more learnable task with existing structural datasets (for example, via DeepChem).
+
+
+% Original Results outlines retained for reference; these are superseded drafting notes.
+% \begin{itemize}
+%     \item We look first at encoding efficiency and accuracy applied to the 304K molecules and \TODO{[NUMBER]} conformers from the GEOM database.\cite{GEOM}
+%     \item This database starts at roughly 52 gigabytes of memory when packaged as a single file with each molecule and conformer stored in independent binary source files in the RDKit serialization format
+%     \item The difficulty of working with data at this scale makes it less amenable to further processing and so simplifying this process has real benefits
+%     \item The majority of this memory is consumed by the conformer coordinates stored as 3N 64-bit floating point numbers, giving coordinate resolution on the order of $10^{-16}$ \AA
+%     \item Usage of a SMILES instead of the RDKit serialized molecular graph would decrease memory on a per molecule basis by a few hundred bytes, which applied to every conformer would allow for \TODO{[NUMBER]} GB of savings. We point this out to provide context for the following numbers
+%     \item Use of a 16-bit encoded canonical Z-matrix format would lead to an expected savings of \TODO{[NUMBER]}, or a relative compression of ... to the 64-bit encoded base dataset.
+%     \item Relative to the use of 16-bit encoded Cartesians, which would yield comparable memory savings, this would provide approximately two orders of magnitude improvement in accuracy on every coordinate metric while decreasing truncation instabilities for nearly linear bonds and dihedral angles, see Table~\ref{tab:formal_scalings}.
+%     \item The corresponding coordinate errors approach $10^-10$ \AA at a 32 bit encoding, leading to savings of approximately \TODO{[NUMBER]}
+%     \item To make this dataset compact enough to be easily transferred, it is necessary to introduce the compressed encoding discussed above. This cuts the expected memory usage by about 33\%, leading to a final expected dataset size around \TODO{[NUMBER]}
+% \end{itemize}
+%
+% \begin{itemize}
+%     \item We can exploit knowledge of the overall data distributions to make this even more efficient
+%     \item We note that our bond-length efficiency is already good, so we will focus on improved encodings for the angles and dihedrals with compression
+%     \item We first computed every covalent bond distance, angle, and dihedral over the entirety of the GEOM drugs dataset using the maximum precision Cartesian coordinates
+%     \item Three different coordinate distribution representations will be compared, the uniform distribution assumed above, a base encoding hand tuned to roughly map out features of the dataset and cut down on errors on a test set of 10K randomly chosen conformers, and a refit form of that base encoding to follow the real data distributions of 10 million uniformly sampled angles and dihedrals, sampled indepdently of the 10K conformers
+%     \item The angle model was a sum of \TODO{[NUMBER]} Gaussians and the dihedral model used \TODO{[NUMBER]} Gaussians, with exact parameters given in the \SI{}.
+%     \item For both distributions, using the hand tuned model dropped the MAE, and for the angles this was an almost 5$\times$ improvement due to the relative narrowness of covalent angle values
+%     \item The highly accurate fit to the data decreased mean error due to large outliers as some distribution regions ended up with almost no sampling
+%     \item Using the hand tweaked encodings with best test-set performance, reconstruction RMSDs were computed using the compressed encoding
+%     \item We see an appreciable improvement in expected RMSD, but maximum RMSD, for one conformer out of 10K, increased from $0.5$ \AA to $1.8$ \AA, correspondingly the number of conformers with reconstruction RMSDs greater than $0.2$ \AA increases from 3 to 10 out of 10K
+% \end{itemize}
+%
+% \begin{itemize}
+%     \item To demonstrate the applicability of this encoding to other conformer generation strategies, we switch to the eMolecules dataset
+%     \item Randomly sampling 100 SMILES strings out of 3 million, we use the explicit torsion knowledge distance geometry algorithm (ETKDGv3) from RDKit to generate conformers for each substructure
+%     \item We find similar substructures where atoms and bonding are identical, and dihedral angles agree within 20 degrees, or are offset by 170-180 degrees, to allow for rotation about single bonds
+%     \item Any other query may be used to search for all applicable substructures in roughly linear time in the number of atoms and degree of branching
+%     \item Looking at these partitions, we note that substructures may be matched across functional groups, shown by the match of aromatic carbons in the pyrazole and benzene substructures connected to to amide
+%     \item A total similarity metric could be composed in many ways for a given substructure, for the purposes of this work we will introduce as simple weighting scheme based on the total unique number of matched atoms in runs of at least four atoms as a percentage of each molecules atoms
+%     \item We show the top \TODO{[NUMBER]} matches across the 100 generated conformers based on this substructure matching procedure
+% \end{itemize}
+%
+
+\clearpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% References
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{bibliography/bibliography}
+
+\end{document}

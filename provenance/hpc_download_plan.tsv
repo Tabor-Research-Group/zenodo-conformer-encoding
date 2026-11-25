@@ -1,0 +1,27 @@
+id	cluster	remote	local	kind	description
+angle-fits	entropy	geom-distributions-20261007/angle_models	data/remote/entropy/geom-distributions-20261007/angle_models	directory	Angle fitted models, optimization histories and validation
+dihedral-fits	entropy	geom-distributions-20261007/dihedral_models	data/remote/entropy/geom-distributions-20261007/dihedral_models	directory	Dihedral fitted models and validation
+geom-rmsd-roster	entropy	geom-distributions-20261007/rmsd-comparison-20261012	data/remote/entropy/geom-distributions-20261007/rmsd-comparison-20261012	directory	Frozen 100,000 GEOM conformer selections and source indices
+emols-distinct	entropy	emols-distinct-025-20261019/results	data/remote/entropy/emols-distinct-025-20261019/results	directory	Exact 0.25 Angstrom deduplicated eMolecules selections and conformer arrays
+emols-original	entropy	emols-rmsd-20261007/results	data/remote/entropy/emols-rmsd-20261007/results	directory	Original eMolecules population, reconstruction records and failures
+emols-similarity	entropy	emols-similarity-20261012	data/remote/entropy/emols-similarity-20261012	directory	Directional sampled similarity scores, pair IDs and encoded conformer cache
+geom-canonical	entropy	geom-canonical-rmsd-energy-20261014/results	data/remote/entropy/geom-canonical-rmsd-energy-20261014/results	directory	Canonical Z-matrix benchmark and energy records
+geom-energy-nse	entropy	geom-reconstruction-energy-20261014/results	data/remote/entropy/geom-reconstruction-energy-20261014/results	directory	Original NSE reconstruction energy comparison
+geom-reference-theories	entropy	geom-reference-model-comparison-20261016/results	data/remote/entropy/geom-reference-model-comparison-20261016/results	directory	Three-potential energies on the original reference structures
+geom-reconstructed-theories	entropy	geom-reconstruction-models-20261019/results	data/remote/entropy/geom-reconstruction-models-20261019/results	directory	Reference coordinates and reconstruction energies across three potentials
+geom-adaptive	entropy	geom-adaptive-encoder-20261118/results	data/remote/entropy/geom-adaptive-encoder-20261118/results	directory	Frozen conformer geometries, encoded packets, model pointers and adaptive results
+geom-constrained-energy	entropy	geom-constrained-comparison-20261121/results	data/remote/entropy/geom-constrained-comparison-20261121/results	directory	Paired constrained and unconstrained energies, geometry records and all attempts
+geom-final-decode	entropy	geom-interval-decoding-distributions-20261123/results	data/remote/entropy/geom-interval-decoding-distributions-20261123/results	directory	Final 99,990-record RMSD and decode-time comparison, including all statuses
+geom-smiles-main	entropy	geom-drugs-smidb-20261019/geom_drugs.smi.gz	data/remote/entropy/geom-drugs-smidb-20261019/database/geom_drugs.smi.gz	file	Gzipped compact GEOM drugs database; expanded locally unless disabled
+geom-smiles-lines	entropy	geom-drugs-smidb-20261019/database/line_indices.npy	data/remote/entropy/geom-drugs-smidb-20261019/database/line_indices.npy	file	SMILES line offsets
+geom-smiles-molecule-index	entropy	geom-drugs-smidb-20261019/database/metadata_molecule_index.npy	data/remote/entropy/geom-drugs-smidb-20261019/database/metadata_molecule_index.npy	file	Auxiliary molecule indices
+geom-smiles-meta	entropy	geom-drugs-smidb-20261019/database/meta.json	data/remote/entropy/geom-drugs-smidb-20261019/database/meta.json	file	SMILESSupplier database settings
+geom-smiles-molecules	entropy	geom-drugs-smidb-20261019/database/molecules.jsonl	data/remote/entropy/geom-drugs-smidb-20261019/database/molecules.jsonl	file	GEOM source molecule metadata
+geom-smiles-exceptions	entropy	geom-drugs-smidb-20261019/database/source_summary_exceptions.json	data/remote/entropy/geom-drugs-smidb-20261019/database/source_summary_exceptions.json	file	Recorded source exceptions
+geom-smiles-models	entropy	geom-drugs-smidb-20261019/database/encoding_models	data/remote/entropy/geom-drugs-smidb-20261019/database/encoding_models	directory	Encoding models for the compact database
+chiro-factorial	grace	chiro-full-factorial-20261024	data/remote/grace/chiro-full-factorial-20261024	directory	Full factorial campaign: features, source, checkpoints, histories and pooled 144-run results
+chiro-zmatrix	grace	chiro-zmatrix-20261026	data/remote/grace/chiro-zmatrix-20261026	directory	Z-matrix torsion extension: features, source, checkpoints and pooled 48-run results
+chiro-controls	grace	rs-prediscretization-20261020/precision-controls	data/remote/grace/rs-prediscretization-20261020/precision-controls	directory	Unnormalized precision controls
+chiro-radius	grace	rs-radius-20261020	data/remote/grace/rs-radius-20261020	directory	Torsion-radius normalization controls
+chiro-phase	grace	rs-phase-norm-20261021	data/remote/grace/rs-phase-norm-20261021	directory	Phase-normalization controls
+chiro-original	grace	chiro-original-baseline-20261023	data/remote/grace/chiro-original-baseline-20261023	directory	Original ChIRo source-data baseline and validation

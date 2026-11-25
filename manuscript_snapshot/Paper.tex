@@ -1,0 +1,814 @@
+\documentclass[%
+ preprint,
+superscriptaddress,
+%groupedaddress,
+%unsortedaddress,
+%runinaddress,
+%frontmatterverbose, 
+%preprint,
+%preprintnumbers,
+%nofootinbib,
+%nobibnotes,
+%bibnotes,
+ amsmath,amssymb,
+ aip,
+ jcp,
+%pra,
+%prb,
+%rmp,
+%prstab,
+%prstper,
+%floatfix,
+]{revtex4-2}
+
+
+\input{config.tex}
+
+% Reviewed PNG exports: true selects wide; false selects narrow (half text width).
+\newif\ifEncodingPreprintFigures
+\EncodingPreprintFigurestrue
+\newcommand{\EncodingFigureWidth}{\ifEncodingPreprintFigures\textwidth\else.5\textwidth\fi}
+
+\newcommand{\ChemReview}[2]{{\color{red!65!black}#2}\textsuperscript{\textcolor{red!65!black}{[C#1]}}}
+\referenceExternalDocument{SI}
+
+\begin{document}
+\title{
+An Optimal Conformer Encoding and Geometric Fingerprint for Structure-Supplemented Molecular Databases
+}
+% Thinking about if title should also say something about what would be enabled by these methods. 
+\date{\today}
+
+\author{Mark A. Boyer}
+% \email{maboyer@tamu.edu}
+\affiliation{Texas A \& M University,
+Department of Chemistry
+580 Ross St
+College Station, TX 77843, United States of America
+}
+
+\author{Daniel P. Tabor}
+\email{daniel_tabor@tamu.edu}
+\affiliation{Texas A \& M University,
+Department of Chemistry
+580 Ross St
+College Station, TX 77843, United States of America
+}
+
+\begin{abstract}
+Large collections of conformers are needed for the virtual screening of molecular libraries and many machine learning molecules, but the storage of every conformer creates substantial data requirements. The known constraints and patterns of molecular geometry provide an opportunity to reduce these requirements. 
+% Covalent bonds near equilibrium geometries are near given values, and certain torsional modes exhibit strongly non-uniform yet predictable distributions. 
+%
+Here, we introduce a compact conformer encoding scheme that uses these features to allocate numerical precision among internal coordinates. We build a molecular graph to determine the coordinate references, and allow the geometry to be stored in a compact, machine-readable single-line representation. This packed binary geometry requires approximately six-fold less storage than double-precision Cartesian coordinate representations of the geometries. 
+Using the example libraries of drug-like conformers from eMolecules and GEOM, we evaluate the storage requirements along the local geometric reconstruction loss, reconstructed Cartesian RMSD, and, importantly, the single-point energy error on reconstruction. 
+At the limit of unchanged storage, distribution-informed quantization reduces the mean construction RMSD by approximately 20\% and mean absolute energy pertrubations by approximately half compared to uniform quantization. Finally, we demonstrate a stereochemical classification task to show these geometric features can be reused in existing machine learning frameworks. These results establish a practical approach to compact conformer storage and characterize the accuracy tradeoffs that govern its use. 
+\end{abstract}
+
+
+\maketitle
+
+\section{Introduction}
+% DT Introduction try 
+
+%\textbf{Start DT Writing}
+% have you noticed your storage and RAM getting more expensive? 
+Storage and numerical precision are recurring considerations in applications of computational chemistry. Molecular databases use compact representations, such as SMILES strings to record connectivity. Computational chemistry packages now often provide options for choosing to store among single, mixed, and double precision for storage and calculations to balance accuracy and computational costs. Reduced-precision trajectory formats similarly limit the information retained for each configuration to make large simulations more manageable. In each case, one must ask how much numerical precision needs to be retrained for the intended application.
+
+This question has become more relevant in the ``big data'' age of applied computational sciences. Our focus here is on molecular databases that include molecular geometries, especially conformational ensembles. A molecular graph can be stored once, and in a relatively compact representation, but each additional conformer requires storing a distinct three-dimensional geometry. Databases such as GEOM, which contains approximately 37 million conformations, show how this additional information grows with the number of molecules and the number of conformers retained for each molecule. Compact geometric representations could make these collections easier to store, transform, and re-use in screening and ML workflows.
+Since chemical geometries have small variations and predictable distributions in their internal coordinates (bond lengths, angles, and dihedral angles), this provides an opportunity to allocate representable values according to the geometry being stored, retraining finer resolution on selected regions and using fewer bits for more rarely used regions. Of course, the resulting allocation must account for uncommmon geometries and dominant populations, since improving average reconstruction may expose large errors in the tails of the distribution. 
+
+Several recent representations have been developed to connect molecular line notations with three-dimensional geometries. CSMILES extends SMILES with conformational information, while Mol-StrucTok combines local internal coordinate descriptions with a learned, discrete alphabet for molecular modeling. These developments motivate examining compact geometric representations as a storage format, with explicit accounting fo the space required and the fidelity of the recovered structures.
+
+Here, we develop a compact conformer encoding based on graph-derived internal coordinate references and make separate precision choices for the storage of distances, angles, and dihedral angles. We assess the encoding practical performance through the relationship between storage requirements and reconstruction accuracy. We evaluate this on both RMSD and energetic grounds. Following the motivation of prior work on lossy trajectory compression, we evaluate the typical errors and rare large deviations to identify applications where the precision here is useful. 
+
+The encoded coordinates also provide a potential connection between compact storage and geometric-based machine learning applications. Selected internal coordinate features can either be accessed or reconstructed locally, which offers a way to reuse geometric information across ML tasks. We show that this works on stereochemical classification tasks, and this motivates the further evaluation of compact conformer representations as inputs to molecular ML models. 
+\textbf{End DT Writing}
+
+% This is without the ``serial storage'' -> zip as discussed on Slack. If that works, add one-two more sentences to the above paragraph 
+
+% Start with the ``big data for chemistry age'' if we are going for a big journal. 
+Molecule datasets have played a key role in the drug discovery process for multiple decades now.
+From ChEMBL to ZINC, these datasets help mitigate the challenge of sampling diverse, but relevant portions of chemical space.\cite{ChemBL,ZINC}
+These datasets are often shared as unordered lists of string representations of molecules like SMILES, providing a particularly efficient yet still human-digestible representation of standard organic or metallorganic chemical species.\cite{Weininger1988SMILES,Weininger1989CanonicalSMILES,Krenn2020SELFIES}
+As of the 2020 release of ZINC, there were 1.4 billion drug-like molecules in the dataset.
+This dataset is commonly supplemented with other datasets from eMolecules, PubChem, and ChEMBL for screening tasks.
+By default, these datasets only provide chemical representations, omitting structural information.
+Given the diversity of conformer sampling and generation strategies, this is a reasonable choice.
+Many chemical properties, however, require specific conformational data, particularly energetics and site frequencies.
+To address this gap, new conformer-supplemented datasets are being developed.\cite{GEOM}
+The use of such datasets is constrained by their size, primarily due to the cost of storing coordinates for every conformer for every included molecule.
+Despite this, such datasets are going to be increasingly important for machine-learned models to be trained on specific structure property relationships.
+
+% A SMILES-only record supplies the molecular graph without a particular set of atomic coordinates.
+% This is relevant as classic representations of atom types and bonding do not distinguish its conformers.
+% For instance, \textit{anti} and \textit{gauche} \textit{n}-butane are indistinguishable without extra conformational information.
+% Given the diversity of conformer sampling and generation strategies, this is a reasonable choice.
+% Many chemical properties, however, require specific conformational data, particularly energetics and site frequencies.
+% ZINC20 also distributes docking-ready three-dimensional structures, while PubChem3D and GEOM provide conformer collections.\cite{ZINC,Bolton2011:PubChem3D,GEOM}
+% The use of such datasets is constrained by their size, primarily due to the cost of storing coordinates for every conformer for every included molecule.
+% Despite this, such datasets are going to be increasingly important for machine learned models to be trained on specific structure property relationships.
+
+% To that end, a conformer format to decrease the storage cost of such datasets while remaining both human readable and amenable to further ingestion by machine learned models is desirable.
+% Given the success of SMILES and robust molecular string representations such as SELFIES, such a method would preferably support a plain text encoding while minimizing memory cost and without obfuscating key structural features.\cite{Weininger1988SMILES,Krenn2020SELFIES}
+% It should also support linear-time parsing, as a SMILES string already encodes a molecular graph in a format that can be read in roughly linear time.
+% To determine whether or not key structural features are preserved in such an encoding, it must be amenable to further structural fingerprint development.
+% Torsion fingerprints and three-dimensional molecular fingerprints provide established comparisons for conformational and spatial similarity.\cite{SchulzGasch2012:TFD,Axen2017:3d-fingerprint}
+
+To that end, a conformer format to decrease the storage cost of such datasets while remaining both human-readable and amenable to further ingestion by machine-learned models is desirable.
+Given the success of the SMILES string, and successors such as the recurrent SELFIES format, such a method would preferably support a plain text encoding while minimizing memory cost and without obfuscating key structural features.
+Several recent representations already link molecular line notations to internal geometry in the context of machine learning applications, but do not provide reconstructability for any arbitrary conformer.\cite{Gao2024MolStrucTok,Feng2024Lingo3DMol,Furness2025CSMILES,Xiong2026ConfSeq}
+It should also support linear-time parsing, as SMILES and other string representations already encode a molecular graph in a format that can be read in roughly linear time.
+It must be also amenable to further structural fingerprint development.\cite{SchulzGasch2012:TFD,Axen2017:3d-fingerprint,Ballester2007:USR,Schreyer2012:USRCAT,Quintana2022:md-fingerprints,Quintana2025:bitbirch}
+
+
+% Torsion fingerprints provide an established measure for comparing conformers of the same molecule.\cite{SchulzGasch2012:TFD}
+% For comparisons across molecules, E3FP describes three-dimensional atomic neighborhoods, while USR and USRCAT summarize molecular shape and, in USRCAT, pharmacophoric features.\cite{Axen2017:3d-fingerprint,Ballester2007:USR,Schreyer2012:USRCAT}
+% These are complementary comparisons for the directional substructure coverage considered here.
+
+% Several recent representations already link molecular line notations to internal geometry.\cite{Gao2024MolStrucTok,Feng2024Lingo3DMol,Furness2025CSMILES,Xiong2026ConfSeq}
+% CSMILES adds dihedral information to SMILES and addresses conformer canonicalization, while ConfSeq combines SMILES with bond angles, dihedrals, and pseudo-chirality.\cite{Furness2025CSMILES,Xiong2026ConfSeq}
+% The Mol-StrucTok preprint uses topology-derived references to attach local distances, angles, and torsions to SMILES or SELFIES tokens, with a learned discrete alphabet.\cite{Gao2024MolStrucTok}
+% Lingo3DMol also uses graph-derived local internal coordinates, combined with global coordinates for pocket-based generation.\cite{Feng2024Lingo3DMol}
+% These treatments establish close precedents for geometry-bearing molecular sequences.
+% The focus here is the storage--accuracy tradeoff of explicit scalar precision choices, including their consequences for local geometry, reconstructed shape, and energy.
+
+
+In this work, we provide a conformer encoding of this form, using a canonical internal coordinate representation based on a linear atom ordering.
+We demonstrate the applicability of this encoding to large conformer datasets and discuss its reconstruction efficiency.
+We then apply this encoding to define fast conformational similarity metrics across molecules.
+Finally, we demonstrate the applicability of this encoding to machine learning tasks, showing how greater efficiency in training may be obtained from datasets supplemented with this representation.
+
+
+\section{Theory}
+
+Chemical line representations, like SMILES, encode a chemical compound as a sequence of atoms with their connectivity, aromaticity, branching, and ring structures indicated in a format that can be efficiently decoded.
+For a sequence of $N$ atoms, reconstructing the graph structure requires $N$ steps.
+This provides an implicit linear order to the atoms in the compound.
+% A canonical SMILES convention makes that order deterministic for the chosen graph representation; an arbitrary SMILES traversal need not be canonical.\cite{Weininger1989CanonicalSMILES}
+The same ordering can be used to construct a molecular conformation in a ball-and-stick model, where each atom is placed based on its bond lengths, angles, and Newman projection bond rotation (dihedral) angle.\cite{Newman1955:projection}
+
+A sequence of distances, angles, and dihedrals for building a conformer in this way comprises a $Z$-matrix.
+%, using the internal-coordinate description familiar from molecular vibration theory.\cite{wdc:book}
+% The separation of local geometry from rotations about bonds is also used in conformer generators such as GeoMol and Torsional Diffusion.\cite{Coley2021:GeoMol,Jing2022:torsional-diffusion}
+% A ball-and-stick model describes conformation through bond lengths, the angles at which bonds meet, and rotations about bonds, familiar from Newman projections.
+% A $Z$-matrix places each atom using a distance, angle, and signed dihedral relative to previously placed atoms.
+In the absence of branching, there is a very natural choice for the $Z$-matrix by just following the linear order of atoms from one end to the other.
+When branching occurs, following the linear order of atoms naively will lead to unnaturally large distances and unnaturally small angles.
+To ameliorate this issue, we can use the connectivity information implicit in the SMILES representation to resolve branching.
+As we progress along the ordered atoms, we will split our atoms into chains based on their bonding.
+For instance, if atom $i$ is bonded to atom $i-1$, we keep them in a chain together.
+On the other hand, if atom $i$ is not connected to atom $i-1$, we work backwards to find the first previous atom it is connected to. Call this atom $j$.
+We will then use the chain containing atom $j$ to choose atoms for the other atoms to define the angles and dihedrals.
+This provides an implicit, canonical partitioning of the molecular graph for the system, displayed in \reffig{zmat_chunking}.
+
+\begin{figure}[ht]
+\begin{center}
+    \includegraphics[width=1.0\textwidth]{\RootDirectory/figures/conformer_encodings.png}
+    \caption{
+    SMILES strings, representative conformer encodings, and canonical partitioning based on the SMILES representation for three commercially important drugs,
+    (A) fluoxetine, a selective serotonin reuptake inhibitor
+    (B) warfarin, a blood thinner
+    (C) carvedilol, a beta-blocker.
+    The ordering assigned by the SMILES string is also indicated in (C) and a pictorial representation of the byte encoding for is shown as an inset. 
+}
+    % \hl{look for some more "punchy" molecules}
+    % (A) SMILES string and corresponding partitioning of a molecular graph
+    % (B) Base-16 encoded representation of a sequence of atomic positions
+    % (C) A sample base-64 encoded conformer for this structure, color coded by atoms represented, encoding is 136 characters while base SMILES is 45
+% }
+\label{fig:zmat_chunking}
+\end{center}
+\end{figure}
+
+\noindent If atom $j$ has no angle or bond referents, the chain for atom $j$ is traversed forward to find the best covalent referents. 
+When two non-bonded fragments are specified, the distance referent for the first atom in the second fragment is chosen to be the graph centroid for the first fragment.
+There are many other special cases to work through when defining this canonical partitioning, and the complete algorithm is provided in the \SI{}.
+% Various other edge cases must be handled and a complete description is given in the \SI{} and reference implementation of the full algorithm is provided.
+
+This procedure constructs a $Z$-matrix for the molecule, which can then uniquely specify the molecular conformation.
+The algorithm is designed to maximize the covalent nature of the internal coordinate choice, which has real benefits with respect to the expected distribution of internal coordinate values.
+To assess expected coordinate distributions, we have computed every covalent bond distance, angle, and dihedral across the over 31 million unique conformers from around 304,000 molecules in the drug-like GEOM dataset.
+In Figure~\ref{fig:bond_length_distribution}, we plot the distribution of the $\sim$1.4 billion covalent bond lengths partitioned by bond type.
+Over this entire dataset, only a marginal tail of bond distances are shorter than $0.5$ \AA{} or longer than $2.5$ \AA{}, and the vast majority of the density is between $0.8$ and $1.8$ \AA{}.
+
+
+% Single instead of "Singles", get commas in big numbers
+\begin{figure}[ht]
+\begin{center}
+    \ifEncodingPreprintFigures
+    \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/bond_length_distribution_wide.png}
+    \else
+    \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/bond_length_distribution.png}
+    \fi
+    \caption{
+    Bond length distributions colored by bond type. Double bond distribution is multiplied by 5$\times$ and triple bond distribution is multiplied by 100$\times$ for visibility. The total number of distances per type is given in the legend.
+}
+\label{fig:bond_length_distribution}
+\end{center}
+\end{figure}
+
+% \TODO{MAKE A BIT MORE BROAD, CONNECT INTUITIVE BALL-AND-STICK PICTURE}
+The compactness of this distribution provides an opportunity to encoded the internal coordinate values more efficiently.
+By treating distances between $0.5$ and $2.5$ \AA{} as needing higher fidelity encoding, for a given number of bits we can allocate more of the bit space to represent numbers in this range.
+In particular, a usual 16-bit floating point number, commonly used in machine learning applications, can represent positive or negative numbers to roughly 3.3 significant digits of precision.
+Bond lengths, however, are uniformly positive.
+By reserving approximately half of the values representable in 16 bits for the higher-fidelity bond region, the current uniform encoder provides a bin spacing of approximately $6.10\times10^{-5}$ \AA\ and a maximum rounding error of $3.05\times10^{-5}$ \AA\ within that region.
+Bonds outside of this region are encoding using a floating point representation over the remainder of the available bit space, effectively interpreting them as their negative.
+For energy prediction tasks or seeding geometries for optimization, highly accurate bond distances are much more important than angles or particularly dihedral angles.
+As a simple example, at the harmonic level an error of $0.005$ \AA\ in a CO bond length can lead to a $0.14$ kJ/mol increase in a conformer energy.
+For comparison, a change of $0.5^{\circ}$ in a CCO angle would lead to a $0.008$ kJ/mol deviation.
+
+
+
+
+% discuss angles as fixed point encodings
+
+
+% \begin{itemize}
+%     \item SMILES and SELFIES provide ordered (linear) representations of a molecular graph
+%     \item We can traverse the graph in this order to build out a Z-matrix that maximizes covalent distances and angles
+%     \item This segmentation strategy can be extended to non-bonded complexes by using the graph centroid for each previous segment to determine placement
+%     \item Preserving covalent geometry in the Z-matrix allows for efficient encoding by taking advantage of natural coordinate bounds
+%     \item Computing all bonds in GEOM, we find 99.9\% lie within $0.5$ and $2.5 \AA$. We therefore provide higher resolution encoding in this region. Moreover, bond lengths are uniformly positive which we can use to make a more efficient encoding.
+%     \item A $k$-bit integer has $2^k$ unique values. Allocating approximately half of them to the $0.5$--$2.5$ \AA\ bond region gives a bin width of approximately $2/(2^{k-1}-1)$ \AA. For the current 16-bit encoder, the in-range half-step bound is $3.05\times10^{-5}$ \AA; the mean absolute error estimate for a uniform distribution within each bin is $1.53\times10^{-5}$ \AA.
+%     \item Since covalent bond length variations on the order of $0.001 \AA$ can provide significant changes in energies, this is a reasonable primary discretization
+%     \item Outside of this range, we will use a standard IEEE floating point encoding, which provides 3.3 significant digits of precision for a 16 bit float, or accuracy $\sim0.004 \AA$ for bond lengths under 25 $\AA$
+%     \item Angles and dihedrals have defined ranges, so we will always use a fixed-point interpretation
+%     \item Since energies are less sensitive covalent bond angles than bond lengths, and are even less sensitive to dihedral angles, we will use an optional encoding for these quantities to cut our memory budget by 1/3
+%     \item In this encoding, we will pack both an angle and dihedral into one 16 bit integer, using the first byte to encode the angle and the second to encode the dihedral
+%     \item In the absence of any further compression scheme, this leads to a maximum angle error of $\sim0.35^\circ$ and a maximum dihedral error of $\sim0.70^\circ$
+%     \item To use a uniform stream of 16 bit integers, we will let the first angle be encoded at full 16 digit precision, giving that angle a maximum error of $\sim0.0014^\circ$.
+%     \item Further efficiency gains may be had by taking advantage of the actual distribution of internal coordinates over a dataset
+%     \item For instance, instead of interpreting the integer range considered for the encoding as a set of uniform bits, it is possible to place higher sampling density in regions of high coordinate value density
+%     \item When applied to angles, this means putting much higher sampling density around $109.5^\circ$ and $120^\circ$ to capture subtle chances in CCC angles across aromatic rings or nitro groups
+%     \item Algorithmically, this requires one extra compression step where values are transformed first onto the $[0, 1]$ range by the cumulative density function (CDF) of the corresponding data distribution, and this range is then split into the appropriate number of bins
+%     \item On decoding, the inverse CDF, or point-probability function, is used to decode from the remapped $[0, 1]$ range to the true data range
+%     \item This trades accuracy at the tails of the data distribution for accuracy near the most common values
+% \end{itemize}
+
+% The finite range of an internal coordinate makes it possible to allocate representable values directly to chemically relevant geometry.
+% For a molecule with $N\geq3$ atoms, the complete canonical $Z$-matrix stores $N-1$ distances, $N-2$ angles, and $N-3$ dihedrals.
+% At 16 bits per entry its geometry payload therefore occupies $6N-12$ bytes.
+As angles are restricted to $[0,\pi)$ and torsions are restricted to $[0, 2\pi)$, we can use a similar strategy to split them over the available bins in a 16-bit integer.
+Alternately, as resolution errors for torsions and angles are less critical for gettting good initial geometries for further optimization, we can introduce a representation that trades memory for resolution.
+In this ``packed'' representation, the first 8 bits of a 16-bit integer will represent the angle, while the final 8-bits will represent the dihedral.
+This gives, effectively, 256 bins per angle and dihedral.
+This gives an expected/maximum error of $0.176/0.353^\circ$ and $0.353/0.706^\circ$ for angles and dihedrals respectively.
+In return, we use a 33\% less memory for large conformers. 
+
+We can improve performance further by including an encoder-decoder step on the discretized data.
+To motivate this, we will note that angles and dihedrals are not uniformly distributed.
+The bond-angle peaks near $109.5^\circ$ and $120^\circ$ reflect familiar tetrahedral and trigonal-planar local geometries.
+We use a fitted cumulative distribution function to assign more representable angular values to densely populated geometries, a form of nonuniform scalar quantization or companding.\cite{Bennett1948QuantizedSignals}
+The decoder is then the inverse cumulative distribution function, often referred to as the percent-point function (PPF).
+Density fitting and minimizing reconstruction error are distinct objectives; the choice of transform does not by itself establish an optimal quantizer.\cite{Lloyd1982ScalarQuantization}
+The CDFs for this work will be composed as a sum of seven Gaussians with adjustable positions and widths.
+To simplify application to a dihedral domain, we will add in an additional constant shift parameter, $s$, that will transform our dihedrals from being distributed on the $[0, 2\pi)$ domain to the $[s, 2\pi + s)$ domain.
+This allows the periodic wrapping to occur not at 0/2$\pi$, but instead shift it to a low-density region.
+
+For inclusion in human readable SMILES databases, an text encoding of the byte stream discussed is required.
+We will use the standard base-64 encoding, which has the benefit of being fast to serialize and deserialize, requiring approximately 3.3 characters per coordinate, and requiring no characters outside of the existing range used by SMILES strings.
+Further compression efficiency may be obtained with additional compression algorithms.
+
+% The packed format retains 16-bit distances and combines each of the $N-3$ body angle/dihedral pairs into one 16-bit entry, assigning eight bits to each coordinate.
+% The first angle, which has no corresponding dihedral, retains a separate 16-bit entry.
+% This reduces the geometry payload to $4N-6$ bytes, approaching a one-third reduction relative to the complete 16-bit internal representation as $N$ increases.
+% For a uniform $k$-bit angular quantizer with both interval endpoints represented, the bin spacing is $L/(2^k-1)$ for interval length $L$.
+% Rounding to nearest gives a half-step error bound.
+% Thus the uniform eight-bit body has bond-angle and dihedral bounds of $0.35294^\circ$ and $0.70588^\circ$, respectively, while the first angle has a bound of approximately $0.00137^\circ$.
+% These bounds concern stored internal coordinates; they do not bound every bond-graph quantity or the Cartesian displacement after reconstruction.
+
+% Uniform quantization allocates the same resolution to common and rare geometries.
+% The observed concentration of covalent bond angles near tetrahedral and trigonal geometries suggests allocating more levels to those regions.
+% Let $F_\eta$ be a fitted cumulative distribution with parameters $\eta$, and let $[a,b]$ be the coordinate interval.
+% The encoder uses its interval-normalized cumulative distribution
+% \begin{equation}
+%  H_\eta(x)=\frac{F_\eta(x)-F_\eta(a)}{F_\eta(b)-F_\eta(a)}.
+%  \label{eq:encoding_cdf}
+% \end{equation}
+% The quantized value and reconstruction are
+% \begin{equation}
+%  q=\operatorname{round}\!\left[(2^k-1)H_\eta(x)\right],\qquad
+% \widehat{x}=H_\eta^{-1}\!\left(\frac{q}{2^k-1}\right).
+%  \label{eq:encoding_quantizer}
+% \end{equation}
+% Here $k$ is the bit depth of the coordinate field.
+% The inverse cumulative distribution is the quantile function, also called the percent-point function (PPF).
+% The numerical comparisons below use the saved native PPF grids, including their endpoint and interpolation behavior, rather than an ideal continuous inverse.
+% Where the density $h_\eta$ is nonzero and varies slowly within a quantization cell, the local coordinate spacing is approximately $1/[(2^k-1)h_\eta(x)]$.
+% Higher density therefore provides finer local resolution, at the cost of wider cells elsewhere.
+% Fitting the observed density and minimizing reconstruction error are different objectives: a density fit can allocate too few levels to sparsely populated regions.
+% We consequently optimize reconstruction error with an explicit empirical maximum-error constraint and compare that model with a likelihood refit below.
+% The distribution and any torsional shift are shared model configuration; they do not increase the per-conformer geometry payload, although a dataset must make that configuration available to the decoder.
+
+% The integer stream can be transported as raw bytes or as a text annotation attached to a molecular representation.
+Hexadecimal represents each byte using two characters and provides a case-insensitive form that is easy to inspect.
+% Base64 uses four characters per three bytes, apart from padding, reducing the text length by approximately one third relative to hexadecimal.
+% Its characters can be carried within the reserved annotation syntax without changing the underlying geometric quantization.
+Compression of collections of annotations may provide further storage savings, but it is separate from the geometry-payload counts reported here.
+% \TODO{Insert a measured compressed-archive comparison if one is reported; the present experiments do not establish a GZIP savings percentage.}
+
+% begin{itemize}
+%     \item Multiple string representations of this encoded data stream are possible
+%     \item The simplest form is to use a base-16 representation, with each byte using two case insensitive alphanumeric characters
+%     \item An increasingly common string encoding for data is a base-64 encoding which supports very fast encoding and decoding for an arbitrary byte stream, which provides a 33\% extra encoding efficiency while retaining benefit of only using characters already reserved for SMILES strings
+%     \item The use of a standardized character range can help make additional DEFLATE/GZIP-style compression more efficient, % % \TODO{[DISCUSS 30\% additional compression efficiency from GZIP over large conformer datasets, note connections to finger prints]}
+% \end{itemize}
+
+\subsection{Applicability as a Molecule Fingerprint}
+
+Line-representations of molecules, like SMILES, can be parsed in roughly linear time.
+This parsing maps directly onto the coordinate encoding defined here.
+We can therefore efficiently supplement any fingerprinting algorithm that uses molecular identity or moieties with structural information.
+Here, we will define a very simple molecular similarity metric across conformers by finding subsequences of atoms in conformers $A$ and $B$ with similar atomic identities, bonding, and dihedral angles.
+As we are working with integer encoded dihedral angles, we need to express our dihedral relationships in terms of the corresponding integer encoded comparison.
+This has the benefit of speeding up all comparisons, as operations on integers are fast.
+
+
+% The same atom order that defines the geometry stream supplies a sequence for comparing molecular substructures.
+% Parsing the SMILES annotation associates each coordinate entry with an atom, its parent in the canonical fragment tree, and its incoming bond.
+% Distances can be read directly from their integer entries, while body angles and dihedrals are obtained from the two bytes of each packed pair.
+% This allows a fingerprinting procedure to compare integer geometric tokens together with element and bond information without reconstructing a complete Cartesian conformer.
+% Numerical token comparisons require the same quantization model and precision on both sides; values from different fitted CDFs cannot be compared as though they used the same angular scale.
+
+% \begin{itemize}
+%     \item We can parse a SMILES in roughly linear time, tracking bond types and atom types
+%     \item This same ordering is applied directly to the encoded coordinates, interpreted as bytes
+%     \item The angles and dihedrals can be read directly from the byte stream by splitting every other pair of bytes into an angle and dihedral byte
+%     \item Distances require no splitting
+%     \item By interpreting distances, angles, and dihedrals directly as integers we can find subsequences that are common between two difference systems, with all computations done directly on the integer representation, avoiding any extra conversions
+%     \item Tanimoto distances or more sophisticated fingerprints can be computed as well, or atom subsequences may be directly matched via SMARTS patterns from the SMILES representation and the corresponding coordinates may be compared
+%     \item This fingerprint depends on how a system was linearized, as across branches the corresponding dihedral angle depends on ordering
+% \end{itemize}
+In the interest of simplicity, the similarity metric we use here only considers the percentage of atoms from conformer $A$ that have a match of at least four atoms in conformer $B$.
+This provides a directional similarity score, as there may be more atoms in molecule $B$ than $A$.
+In this case the percent similarity of $A$ with $B$ would be higher than the similarity of $B$ with $A$.
+It should be noted that this approach is linearization-dependent, as molecules with multiple branched representations will have different dihedrals for their encoding.
+
+
+% A graph query can first identify chemically eligible fragments and then compare their encoded geometry.
+% Alternatively, a tree-overlap search can compare annotated fragments directly, retaining matches of a specified minimum size.
+% The score used here counts unique matched atoms rather than the number of overlapping match paths.
+% Normalizing by the number of atoms in the query yields a directional coverage score, so a smaller fragment may be almost completely covered by a larger molecule even when the reverse coverage is much smaller.
+% This coverage score is distinct from a symmetric Tanimoto similarity.
+% Its value also depends on the chosen SMILES linearization and reference-tree construction, particularly for torsions across branches.
+% We therefore use a common canonical ordering and report both directional scores rather than assuming symmetry.
+
+\section{Results}
+
+% \begin{itemize}
+%     \item We look first at encoding efficiency and accuracy applied to the 304K molecules and \TODO{[NUMBER]} conformers from the GEOM database.\cite{GEOM}
+%     \item This database starts at roughly 52 gigabytes of memory when packaged as a single file with each molecule and conformer stored in independent binary source files in the RDKit serialization format
+%     \item The difficulty of working with data at this scale makes it less amenable to further processing and so simplifying this process has real benefits
+%     \item The majority of this memory is consumed by the conformer coordinates stored as 3N 64-bit floating point numbers, giving coordinate resolution on the order of $10^{-16}$ \AA
+%     \item Usage of a SMILES instead of the RDKit serialized molecular graph would decrease memory on a per molecule basis by a few hundred bytes, which applied to every conformer would allow for \TODO{[NUMBER]} GB of savings. We point this out to provide context for the following numbers
+%     \item Use of a 16-bit encoded canonical Z-matrix format would lead to an expected savings of \TODO{[NUMBER]}, or a relative compression of ... to the 64-bit encoded base dataset. 
+%     \item Relative to the use of 16-bit encoded Cartesians, which would yield comparable memory savings, this would provide approximately two orders of magnitude improvement in accuracy on every coordinate metric while decreasing truncation instabilities for nearly linear bonds and dihedral angles, see Table~\ref{tab:formal_scalings}.
+%     \item The corresponding coordinate errors approach $10^-10$ \AA at a 32 bit encoding, leading to savings of approximately \TODO{[NUMBER]}
+%     \item To make this dataset compact enough to be easily transferred, it is necessary to introduce the compressed encoding discussed above. This cuts the expected memory usage by about 33\%, leading to a final expected dataset size around \TODO{[NUMBER]}
+% \end{itemize}
+
+To demonstrate the use of this encoding to outside of a theoretical setting, we turn to the GEOM database.\cite{GEOM}
+The drug-like molecular partition of GEOM contains 304,348 molecules and 31,256,395 conformers.
+As distributed, GEOM requires about 52 gigabytes of storage space, with the vast majority of that being molecule and conformer storage, saved as serialized RDKit data.
+Each conformer in GEOM is stored as a set of 3N 64-bit Cartesian coordinates.
+By re-encoding with the packed compression described in this work we are able to cut memory storage for just coordinate data by a factor of at least six.
+When including the compression available in a SMILES encoding relative to full molecular graph storage, we find an effective compression factor of around nine.
+The use of an encoder-decoder architecture to enhance compression accuracy on this dataset will be discussed later.
+
+
+% The GEOM drugs collection provides a demanding setting for geometry storage because it contains many conformers for each molecular graph.\cite{GEOM}
+% The archive used in the reconstruction experiment contained 304,348 molecular entries and 31,256,395 conformers in its actual stored conformer lists.
+% The source archive occupied 50,137,579,520 bytes.
+% These archive bytes include serialized graphs, metadata, container overhead, and compressed geometry, and therefore should not be equated with an uncompressed coordinate-payload size.
+
+% An uncompressed Cartesian geometry represented by three 64-bit numbers per atom occupies $24N$ bytes.
+% For the same atom count, the complete 16-bit internal geometry occupies $6N-12$ bytes and the packed format occupies $4N-6$ bytes.
+% These formulas isolate the geometry payload and exclude the SMILES graph, shared fitted-model parameters, text-transport padding, and archive compression.
+% They make the storage tradeoff explicit without assuming that every byte of an existing database can be replaced by a coordinate entry.
+% The reconstruction results in Table~\ref{tab:formal_scalings} quantify the corresponding accuracy tradeoff, including the distinction between stored-coordinate rounding bounds and measured Cartesian or bond-graph errors.
+% \TODO{Report aggregate byte counts for an actual re-encoded GEOM archive before assigning a final database size or archive compression factor.}
+
+\subsection{Empirical Reconstruction Accuracy}
+
+To explore the accuracy of the reconstruction available with this encoding, we turned to the eMolecules dataset, a database of a few million synthesizable drug-like molecules encoded as SMILES strings.
+We sampled 10,000 molecules, generated 100 conformers with the Explicit Torsion Knowledge Distance Geometry algorithm\cite{Riniker2015ETKDG} and pruned these ensembles with a symmetry-aware aligned heavy-atom RMSD threshold of $0.25$ \AA.
+This resulted in a dataset of 747,974 conformers.
+We compared three different encoding procedures, truncated 16-bit Cartesian coordinates, complete $Z$-matrix encoding, and the packed encoding described above.
+These results are provided in Table~\ref{tab:formal_scalings}.
+Truncated Cartesian encodings require some care, as planar torsion angles can be very sensitive to small perturbations.
+For this reason, we chose only to compare truncation error for torsions on the $[5^\circ, 175^\circ]$ range.
+Further discussion of this choice is in Section~\ref{sec:reconstruction_methods}.
+
+%TODO: need to specify what $\Delta_X$ is both in the text and as a foot note
+\begin{table}[ht]
+\begin{center}
+ \caption{
+    Comparison of coordinate encoding strategies over 747,974 total conformers from 10,000 drug-like molecules
+    % Empirical entries are equal-conformer mean/maximum errors over 747,974 conformers from 10,000 eMolecules molecules, retaining up to 100 per molecule after $0.25$ \AA\ RMSD pruning; daggered entries are analytical estimates/bounds.
+}
+
+\begin{minipage}[c]{\textwidth}
+\input{\RootDirectory/tables/formal_scalings}
+\end{minipage}
+
+\label{tab:formal_scalings}
+\par\smallskip
+\end{center}
+\end{table}
+
+% The internal coordinate entries marked with a dagger are analytical for a uniform data distribution encoding.
+We find, in general, that the full $Z$-matrix encoding is generally about 100$\times$ more efficient than the Cartesian encoding on a per-coordinate basis and is an about 10$\times$ more efficient on full RMSD reconstruction.
+This is despite the fact that the complete Cartesian coordinates must be reconstructed along the $Z$-matrix chain, allowing errors to compound.
+% Coordinate errors can compound along this chain; the measured complete $Z$-matrix RMSDs are nevertheless smaller than those of float16 Cartesian encoding in this sample.
+The packed encoding trades small losses in accuracy for significant memory savings.
+Reconstruction RSMDS are $0.0319$ \AA\ on average and $0.1493$ in the worst case, but the memory required is 33\% of either other encoding strategy.
+
+% Packed reconstruction gives mean/maximum aligned RMSDs of $0.0319$/$0.1493$ \AA\ over the 747,974 retained geometries.
+
+
+% Reconstruction propagates internal-coordinate errors through the coordinate chain,
+% The \SI{} reports fully empirical graph errors, decimal XYZ results, software versions, and the torsion-screening definitions
+
+
+% Internal-coordinate errors propagate along the reconstruction chain, and ring closures and other graph coordinates absent from that chain can exceed the stored-entry quantization bounds.
+% The daggered table entries describe analytical errors of stored coordinates; all RMSD entries are measured after reconstruction.
+% Sampling, RMSD definitions, and fully empirical bond-graph errors are given in the \SI{} (Section~\ref{sec:reconstruction_methods}).
+
+\subsection{Data Distribution-Driven Encoding}
+
+% \begin{itemize}
+%     \item We can exploit knowledge of the overall data distributions to make this even more efficient
+%     \item We note that our bond-length efficiency is already good, so we will focus on improved encodings for the angles and dihedrals with compression
+%     \item We first computed every covalent bond distance, angle, and dihedral over the entirety of the GEOM drugs dataset using the maximum precision Cartesian coordinates
+%     \item Three different coordinate distribution representations will be compared, the uniform distribution assumed above, a base encoding hand tuned to roughly map out features of the dataset and cut down on errors on a test set of 10K randomly chosen conformers, and a refit form of that base encoding to follow the real data distributions of 10 million uniformly sampled angles and dihedrals, sampled indepdently of the 10K conformers
+%     \item The angle model was a sum of \TODO{[NUMBER]} Gaussians and the dihedral model used \TODO{[NUMBER]} Gaussians, with exact parameters given in the \SI{}.
+%     \item For both distributions, using the hand tuned model dropped the MAE, and for the angles this was an almost 5$\times$ improvement due to the relative narrowness of covalent angle values
+%     \item The highly accurate fit to the data decreased mean error due to large outliers as some distribution regions ended up with almost no sampling
+%     \item Using the hand tweaked encodings with best test-set performance, reconstruction RMSDs were computed using the compressed encoding
+%     \item We see an appreciable improvement in expected RMSD, but maximum RMSD, for one conformer out of 10K, increased from $0.5$ \AA to $1.8$ \AA, correspondingly the number of conformers with reconstruction RMSDs greater than $0.2$ \AA increases from 3 to 10 out of 10K
+% \end{itemize}
+
+To explore the benefits of the encoder-decoder architecture discussed above, we return to the GEOM dataset.
+For a fixed database and encoder form, it is possible to fit the best encoder \textit{a priori}.
+To do this, we sampled 10 million angles from the complete space of GEOM internal coordinates as a training set, and held out 10 million distinct angles as a test set.
+Here we compare two different encoders, a uniform encoder-decoder (no model) and a sum of seven Gaussians to follow the CDF of the dataset.
+The Gaussian encoders were fit in two modes.
+In the first, we chose positions and widths to minimize mean angle reconstruction error while constraining the maximum reconstruction error to $<1^\circ$.
+We then refit this distribution via likelihood maximization to optimally represent the test-set distribution CDF.
+The results of these fits are given in Figure~\ref{fig:angle_error_comp}.
+
+
+% We compared three angular encoders at the same packed precision using ten million GEOM bond angles and ten million dihedrals.
+% Uniform uses constant spacing; Base is optimized to reduce mean reconstruction error with a sampled maximum below $1^\circ$; Fit refits Base to maximize the likelihood of the observed distribution.
+% These choices retain the same bond encoding and per-conformer storage.
+
+The base, constrained model is labeled Base, while the refitted model is labeled Fit.
+We see that going from the uniform encoding to the base model improves reconstruction accuracy by $\sim$$5\times$ and that the distribution of errors is much more strongly clustered around 0.0 degrees.
+The likelihood fit samples much more heavily near the most common geometries.
+This causes the distribution of errors to cluster even more tightly around 0.0$^\circ$
+On the other hand, the tails of the distribution have much worse resolution, and these large tail errors outweigh the other improvements and increase the mean absolute error.
+
+% For bond angles, Base reduces mean absolute error from $0.176^\circ$ to $0.0359^\circ$, a 4.90-fold improvement (Figure~\ref{fig:angle_error_comp}).
+% The likelihood Fit describes the dominant peaks more closely but gives a mean error of $0.190^\circ$ and a maximum of $49.6^\circ$.
+% Rare geometries receive too little quantization space, so fitting the density more closely does not necessarily improve reconstruction.
+
+%TODO: make fonts consistent, Panels A and B, not Upper and Lower
+%      label as Encoding Density, change $^\circ$ to Degree
+\begin{figure}[htbp]
+\centering
+\ifEncodingPreprintFigures
+\includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/angle_error_comp_wide.png}
+\else
+\includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/angle_error_comp.png}
+\fi
+\caption{Bond-angle reconstruction errors (A) and encoding densities (B) for Uniform, error-constrained Base, and likelihood Fit. Parentheses give full-sample absolute (mean/max/std) errors in degrees. The histogram shows the central error range; all ten million angles contribute to the statistics. Densities are per degree.}
+\label{fig:angle_error_comp}
+\end{figure}
+
+For dihedrals, the constrained, fitted model gives a more modest reduction in mean error from $0.352^\circ$ to $0.240^\circ$, shown in in Figure~\ref{fig:dihedral_error_comp}.
+As before, fitting to the data distribution directly gives worse performance by yielding poor tail behavior.
+The fitting procedures, shift transformation, model parameters, and full error statistics are provided in Section~\ref{sec:distribution_methods}.
+
+We compare whole-conformer reconstruction across the same 100,000 conformers from GEOM, including hydrogens in the encoding and comparisons.
+This data is shown in Figure~\ref{fig:rmsd_comp}.
+We will test out three encoder/decoder models, no model (Uniform), the best-performing encoder/decoder (Model, labeled Base above), and an adaptively chosen encoder (Adaptive) where the minimum RMSD choice from Uniform and Model is used. 
+This requires one extra bit in the encoding string to indicate which model was chosen.
+A full byte may be used to allow for up to eight encoder/decoder models.
+We see that including an encoder/decoder model leads to a large improvement in performance.
+Adding in the adaptive choice leads to a further improvement in performance, improving the tail behavior of the encoding.
+
+We introduce one further optimization to improve the reconstruction of ring systems.
+We choose a canonical ordering of the ring bonds omitted in the Z-matrix and append these values to the bye stream with the same quantization strategy as before.
+This way we can detect when accumulated errors lead to large bond length changes.
+By then introducing a compact constraint solver that adjusts the decoded Z-matrix within the known error bounds, we can recover a structure where all bonds are encoded to the maximum precision allowed by the encoding.
+In practice, this constraint solving process is very fast, adding only 50 ms of decode time on average for a minimally optimized algorithm.
+This change improves worst case changes in bond length dramatically on large cage-like molecules, taking a naively decoded carbon-carbon bond error from $\sim$0.4 \AA\ to $\sim$1.0$\times10^{-4}$ \AA{}.
+The details of the canonical constraint bond determination and solver, sampling, complete-tail distributions, reconstruction details, and decode timings are provided in Sections~\ref{sec:geom_rmsd_methods} and~\ref{sec:geom_decode_timings}.
+
+% Uniform uses evenly spaced angular levels; Model uses the angle Base and unshifted dihedral Base at the same packed precision.
+% Adaptive chooses whichever candidate gives the smaller aligned all-atom RMSD at encoding, when the source geometry is available, and stores its model identifier for decoding.
+% To preserve ring geometry, we also store bond lengths absent from the construction coordinates and reconstruct within the admissible ranges of both the original coordinates and these closure measurements.
+% These constraints add two bytes per closure distance; the model identifier occupies one byte.
+% The interval bounds themselves follow from the codes and shared encoder settings and require no additional per-coordinate storage.
+
+% Figure~\ref{fig:rmsd_comp} compares the resulting spatial errors for the 99,990 source-available conformers; ten incomplete source graphs remain flagged.
+% With closure constraints, mean RMSDs are $0.0323$, $0.0263$, and $0.0235$ \AA\ for Uniform, Model, and Adaptive, respectively, compared with $0.0339$, $0.0272$, and $0.0248$ \AA\ for the paired unconstrained controls.
+% Adaptive retains the same selected model identifier in this control, so the solid/dashed comparison isolates reconstruction rather than a second model-selection step.
+% The observed constrained maxima are $0.156$, $0.136$, and $0.110$ \AA; these are sample measurements, not bounds on arbitrary geometries.
+% Sampling, complete-tail distributions, reconstruction details, and decode timings are given in the \SI{} (Sections~\ref{sec:geom_rmsd_methods} and~\ref{sec:geom_decode_timings}).
+
+%TODO: get figures full width for preprint, keep .5 for ACS
+%TODO: make legend text bigger, plot density on log scale to check
+\begin{figure}[htbp]
+\centering
+\ifEncodingPreprintFigures
+\includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/rmsd_comp_wide.png}
+\else
+\includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/rmsd_comp.png}
+\fi
+\caption{All-atom reconstruction RMSD distributions for the set of GEOM conformers discussed in the text. 
+No encoding (blue), a Gaussian encoder/decoder model (green), and an adaptively chosen model (pink) are compared.
+Solid curves represent the distributions with an additional constraint solver step including omitted distances from the bond graph, dashed curves are without the constraint solver.
+Distributions are fit by a kernel density estimator
+% Blue, green, and pink denote Uniform, Model, and Adaptive; dashed curves use ordinary reconstruction and solid curves impose the encoded closure-bond intervals. Fills correspond to the constrained curves. Adaptive uses the constrained-RMSD-selected model identifier in both reconstructions. Gaussian kernel density estimates use the complete population, with density per \AA. The displayed window follows the 1\%-of-peak tail rule; full-range curves and complete-sample statistics are in the \SI{}.
+}
+\label{fig:rmsd_comp}
+\end{figure}
+
+We compare the distribution of changes in conformer energies due to reconstruction as well.
+For this comparison, we use the AIMNet2 family of machine learned interatomic potentials.\cite{AIMNet2,AIMNet2-NSE}
+The details of the comparison, complete statistics, and distribution plots across different AIMNet2 models are provided in Sections~\ref{sec:geom_energy_methods} and~\ref{sec:geom_energy_per_atom}.
+% Single-point energy changes provide a complementary test of local distortions (\SI{}, Sections~\ref{sec:geom_energy_methods} and~\ref{sec:geom_energy_per_atom}).
+Focusing on the neutral spin equilibrated variant of AIMNet2, with no encoder/decoder we find the mean absolute error to be 2.62 kJ/mol across the conformer set, or 0.0500 kJ/mol/atom when normalizing by conformer size. These numbers drop to 1.76 kJ/mol and 0.0284 kJ/mol/atom when moving to the adaptively sampled dataset.
+These numbers mask a small number of outliers.
+Without any encoder, we have 751 conformers, or $0.751\%$ of our dataset, with an energy deviation >10 kJ/mol, which drops to 172 when moving to the adaptive model.
+This sample set is driven almost entirely by deviations in bond lengths for bonds in ring structures that are not in the initial Z-matrix.
+Once we include the constraint solve, the adaptive, constrained mean error drops to $0.952$ kJ/mol and $0.0180$ kJ/mol/atom with only 67 conformers, or $0.067\%$ of the sample, with energy deviations >10 kJ/mol.
+These remaining outliers come entirely from distortions up to 12$^\circ$ in ring angles that are missing from the Z-matrix and where the error accumulates over a large ring.
+We chose not to include those in a secondary constraint step as the number of omitted angles is much larger than the number of omitted bond lengths.
+Further improvements to the encoding may include a sparse canonicalization scheme where only omitted ring bonds are considered in the constraint set.
+Complete tables, including normalization by longest chain in a Z-matrix, are given in the \SI{}.
+
+\subsection{Application to Molecular Fingerprinting}
+%TODO: iterate on sectio ntitle
+
+% Encoded geometry also supports substructure comparison, including matches across chemically distinct functional groups (Figure~\ref{fig:fingerprint}).
+% We evaluated directional matched-atom coverage for ten million eMolecules conformer pairs, retaining matches of at least four atoms.
+% Forward and reverse scores differ for 96.5\% of pairs, illustrating the directional nature of this coverage measure.
+% The implemented torsion-byte predicate accepts a broader range than the intended narrow angular-tolerance rule; these results characterize that implementation.
+% The matching procedure and score distributions are given in the \SI{} (Section~\ref{sec:similarity_methods}).
+
+We use the similarity fingerprint described above to characterize the pairwise similarity of molecules in the eMolecules database.
+Using the original candidate conformer ensemble from these 10,000 molecules, we computed the pairwise similarity between 10 million sampled conformer pairs.
+The leads to 20 million total comparisons, as the similarity metric described above is not symmetric.
+For this purpose, substructures will be matched on dihedral similarity with a tolerance of $\pm$15 degrees, or 10 discretization units.
+The distribution of similarities is shown in Figure~\ref{fig:fingerprint}, along with some matched substructures.
+
+\begin{figure}[ht]
+\begin{center}
+    \ifEncodingPreprintFigures
+    % Retain the reviewed original until a separate wide export is available.
+    \IfFileExists{\RootDirectory/figures/fingerprint_dist_wide.png}{%
+        \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/fingerprint_dist_wide.png}%
+    }{%
+        \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/fingerprint_dist.png}%
+    }
+    \else
+    \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/fingerprint_dist.png}
+    \fi
+    \caption{
+    Distribution of pairwise similarities over 20 million comparisons sampled from the eMolecules conformers used in this work.
+    A sample set of substructure matches is indicated, with the overlaps highlighted.
+    The corresponding partitions are provided below the matches.
+}
+\label{fig:fingerprint}
+\end{center}
+\end{figure}
+
+We notice that there is expected to be either significant similarity between conformers or no similarity at all, with the most probable non-zero similarity score being around 60\%.
+This is for a single dataset of relatively drug-like molecules with large numbers of rings, and so this similarity is plausible.
+It should be noted that once a dataset is encoded in this form, individual comparisons are fast. 
+Specific alternate fingerprints, like traditional torsional fingerprints\cite{SchulzGasch2012:TFD}, can also be computed efficiently from this representation.
+
+
+\subsection{Using Encoded Geometry in Learning Tasks}
+
+% \begin{itemize}
+%     \item This encoding provides torsion information and provides a built discretization for geometric learning tasks
+%     \item If a database already has this information computed, we should try to use it in the learning task
+%     \item To have a reasonable baseline for comparison, we compare against an existing model (Coley)
+%     \item Since it is impossible to reproduce the optical rotation dataset described in that work, we will apply these models to R/S prediction
+%     % \item We being by taking their dataset, compiled from experimental data available in Reaxsys
+%     \item We train two variants of models, one directly parallels the Coley group's work, taking in Cartesian coordinates for conformers and generating torsion distributions from there. This uses the complete set of dihedral angles in the system and is therefore called the \textit{complete} model for the rest of this work
+%     \item The other uses similar features ($z_\alpha$, latent vector information) but uses pre-discretized torsion information and is only provided with a restricted set of information
+%     \item In the first step, we provide only the dihedral angles around the stereocenters
+%     \item This, generally, requires more dihedral information than is available in the $Z$-matrix. For this we use a method for minimal Cartesian reconstructions, where only only the minimal chain in the $Z$-matrix that is required to determine the relative orientation of the relevant atoms is reconstructed
+%     \item We call this the \textit{minimal} encoding
+%     \item Our third model is augmented with every dihedral angle in the $Z$-matrix, including those not around the stereocenters
+%     \item The complete, minimal, and augmented models were initially trained over three training replicates, each given up to three days of wall time, four CPU cores, and a single A100 GPU, using the training parameters described by Coley and coworkers\cite{Coley2021:chiro}
+%     \item An additional training run where the learning rate was increased from 10$^{-3}$ to 10$^{-2}$ was performed. In these runs, the models uniformly collapsed and no improvements in prediction accuracy were obtained
+%     \item Two additional augmented training runs were performed for the augmented models where latent vector and auxiliary structural information was included in different amounts
+%     \item The results of this training are provided in Figure \ref{fig:training_curves}
+%     \item Here we notice initially that the augmented and minimal models are, unsurprisingly, able to complete the most training batches within the allocated time, completing all training epochs
+%     \item The complete model must compute large numbers of torsion angles at each batch. This was done as many datasets are so large that storing every precomputed torsion angle becomes infeasible
+%     \item We see from these curves the model is able to learn faster from the minimal torsion information than the complete information, but one of the three replicates suffered from model collapse
+%     \item Interestingly, the augmented data provides the worst performance across the board when using $z_\alpha$, likely because too much confounding torsion information is available, but performance improves significantly when using latent vector information
+%     \item This work does not intended to propose new architectures for model training, and so no further model tuning or hyperparameter optimization was performed
+%     \item Instead, these results demonstrate that the encoding described in this work can be effectively applied to machine learning tasks, particularly those that can benefit from the precomputed information implicit in the encoding
+%     \item The role of pre-discretization on model training was not explored, but this remains an interesting domain for further study
+% \end{itemize}
+
+
+% \TODO{Find a specific task with more "learnability" from e.g. 3D information, take existing literature task (and dataset hopefully)}
+
+% \TODO{
+%     Go to DeepChem papers for baseline models.
+%     Take a SMILEs or fingerprint DeepChem model, show how we improve with data augmentation.
+%     Go to Coley chiro paper and see about enantiomeric encodings.
+% }
+
+A database comprised of conformers encoded using the method described here provides precomputed geometric features that can accelerate learning tasks.
+This is particularly relevant for chiral information.
+We demonstrate this through \textit{R}/\textit{S} classification of conformers with two stereocenters, adapting an existing model trained on this task with published datasets.\cite{Coley2021:chiro}
+The structure of the message passing architecture along with the different classifier readouts and feature types used is provided in the \SI{}.
+We train two variants of models, which we will refer to by the space of torsion angles used.
+One directly parallels the model structure of Coley and coworkers, taking in Cartesian coordinates for a conformer and generating the complete set of torsion angles.
+We will call this the \textit{complete} model.
+The other model architecture uses similar features to encode stereocenter chirality, but uses pre-computed and pre-discretized torsion information given as 8-bit integers.
+We supply different amounts of torsion information to this model.
+First, we provide only the dihedral angles around the stereocenters and the chain that connects them.
+This requires more dihedral information than is immediately available in the $Z$-matrix.
+To compute the remaining torsions, we use a method for minimal Cartesian reconstructions.
+In this, we first find the shortest chain of atoms in the $Z$-matrix that connects the atoms for which we need the dihedral angle.
+Then only the relative positions of these atoms are reconstructed.
+As this uses only the minimal torsion angles to determine stereochemical labeling, we call this the \textit{minimal} model.
+Our third model augments the \textit{minimal} model with the remaining canonical torsion information from the encoding.
+We will refer to this as the \textit{augmented} model.
+Finally, we supply only the torsions that are accessible in the Z-matrix, without any additional computation.
+This will be referred to as the \textit{Z-matrix} model.
+
+Each of these models, \textit{complete}, \textit{minimal}, and \textit{augmented}, \textit{Z-matrix}, was initially trained over three replicates and two learning rates.
+Each training run was performed on a single NVIDIA A100 GPU for up to 100 epochs, using the training parameters described by Coley and coworkers\cite{Coley2021:chiro}
+The results of this training are provided in Figure \ref{fig:training_curves}.
+
+\begin{figure}[ht]
+\begin{center}
+    \ifEncodingPreprintFigures
+    \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/training_curves_wide.png}
+    \else
+    \includegraphics[width=\EncodingFigureWidth]{\RootDirectory/figures/training_curves.png}
+    \fi
+    \caption{
+    Validation accuracy for R/S classification against training time.
+    Three amounts of torsion information are compared, the complete set of torsions in the molecule (blue), the minimal set of torsions (green), and the minimal set augmented with all pre-computed information (pink), and just the information available in the Z-matrix (purple)
+    Dashed curves were run at a learning rate of $10^{-3}$, while solid lines indicate runs performed at a learning rate of $10^{-2}$.
+    Vertical lines indicate the time elapsed to get through 100 training epochs.
+    Dihedral information used in each run is indicated on a sample structure with darker colors indicating the central bond and lighter colors indicating reference atoms.
+    % be more precise here
+    Full run settings are given in Section~\ref{sec:ml_settings}.
+}
+\label{fig:training_curves}
+\end{center}
+\end{figure}
+
+Here we notice that any feature set that includes sufficient stereocenter torsion information reaches almost perfect accuracy on the classification task.
+The \textit{Z-matrix} model does not include that data, although the same canonical constraint procedure used to improve ring closure bond lengths could be used to augment the encoding with that data, which would give \textit{Z-matrix} similar performance to the \textit{agumented} run.
+We also notice that the minimal model can outperform all other models both in run time and learning rate.
+This is unsurprising as it is doing the smallest amount of computational work.
+The minimal reconstruction algorithm used in to train this model could of course be applied to other tasks, not just training neural network models.
+
+We performed further explorations of the effect of quantization, classifier readout, and chiral feature computation from torsion information, but the effects were generally small relative to choice of torsions to include. These results are given in Section~\ref{sec:ml_settings}.
+
+
+% Here we notice initially that the augmented and minimal models are able to complete more training batches within the allocated time.
+% The complete model must compute large numbers of torsion angles at each batch, while the other models reuse precomputed torsion information.
+% We see from these curves that the minimal model learns faster, reaching $92.2\%$ and $94.2\%$ training accuracy in the two successful runs, compared with $80.9$--$82.7\%$ for the complete model.
+% The advantage is also apparent at equal numbers of processed batches.
+% Notably, one of the three minimal replicates suffered from model collapse.
+% Interestingly, the augmented data provides the worst performance, with training accuracies of $59.4$--$61.6\%$ despite processing approximately as many batches as the minimal model.
+
+% To understand that, we note that the original model structure learns from a chiral-deviation term that pools all supplied torsion information.
+% The \textit{augmented} data decreases the relevance of this term for \textit{R}/\textit{S} classification, but the extra structural information makes model collapse less likely.
+% To ameliorate this issue, we introduce information from the latent space embedding of the atomic environments and then information derived from torsions angles auxiliary to the stereocenters.
+% These runs are indicated in Figure~\ref{fig:training_curves} in purple, with the training run with both latent and auxiliary torsion information solid, and the training run with just latent information dashed.
+% Including this information improves top performance to $73.5\%$.
+% These training runs were performed on RTX6000 GPUs with the same wall time limit and so differences in training speed cannot be isolated from hardware.
+% No additional torsion features were computed, however.
+% The latent features, auxiliary constraint, and their roles in combining the torsion information are discussed in the Section~\ref{sec:ml_settings}.
+
+It should be noted that this work does not intend to propose new architectures for model training.
+Therefore, we performed no further model tuning or hyperparameter optimization.
+Instead, these results demonstrate that the encoding described in this work can be effectively applied to machine learning tasks, particularly those that can benefit from the precomputed information implicit in the encoding.
+% The role of pre-discretization on model training was not explored, but this remains an interesting domain for further study.
+
+
+% The latent input supplements $z_\alpha$ with a molecular description obtained by averaging learned features of the atoms and their bonded environments.
+% This chemical information already influences the construction of $z_\alpha$, but is now also supplied directly to the classifier.
+% For R/S assignment, the spatial arrangement of the substituents must be interpreted together with their chemical identities and connectivity.
+% Providing that context separately may therefore help the classifier interpret the combined torsion signal, explaining the improved augmented performance without adding torsions or changing the encoded geometry.
+
+% The two purple runs differ in the strength of the auxiliary training constraint, with the stronger constraint giving the higher accuracy.
+% This constraint acts on the learned torsion representation; it does not supply additional structural information.
+% Each purple setting has only one displayed run, and both remain below the successful minimal runs.
+% The higher-learning-rate runs remain near $50\%$ accuracy, including those with latent information and the stronger constraint.
+% The latent features, auxiliary constraint, and their roles in combining the torsion information are discussed in the \SI{} (Section~\ref{sec:ml_settings}).
+
+% This work does not intend to propose new architectures for model training, and so no further model tuning or hyperparameter optimization was performed.
+% Instead, these results demonstrate that the encoding described in this work can be effectively applied to machine learning tasks, particularly those that can benefit from the precomputed information implicit in the encoding.
+% The reported accuracies describe the training population; predictive performance on unseen molecules was not assessed in this comparison.
+% The role of pre-discretization on model training was not explored, but this remains an interesting domain for further study.
+
+
+% Complete (blue) uses torsions throughout the molecule; Minimal (green) focuses on stereocenters; Augmented (pink) adds other stored torsions to that local set.
+% For this task, rotations of distant bonds can change conformation without changing the local configuration being classified.
+
+% Figure~\ref{fig:training_curves} shows that two of the three initial Minimal runs reach $92$--$94\%$ training accuracy, compared with $81$--$83\%$ for the three successful Complete runs.
+% The successful Minimal runs also perform better at a common number of processed batches.
+% Selecting local geometry can therefore retain a useful stereochemical signal and support more effective learning under these settings.
+
+% The three ordinary Augmented runs reach only $59$--$62\%$, despite processing approximately as many batches as Minimal.
+% Supplying more geometry does not automatically make it useful for the task.
+% Giving the classifier direct access to chemical context alongside the same Augmented geometry partly recovers performance: the purple dashed and solid curves reach approximately $67\%$ and $74\%$, respectively.
+% The solid curve uses stronger regularization.
+% Both remain below the successful Minimal runs, and each purple treatment has only one displayed run.
+% These results show that the same stored geometry can support different learning behavior depending on how its information is selected, combined, and constrained.
+
+% The failed curves are equally relevant to applications.
+% The third initial Minimal run remains near the $50\%$ chance level after an initial increase.
+% Increasing the learning rate also leaves Complete, Minimal, and Augmented near chance, including the additional Augmented attempts with stronger regularization and added chemical context.
+% Neither a smaller geometric input nor a richer representation removes sensitivity to training conditions.
+
+% The practical capability demonstrated here is selective reuse of encoded geometry in a molecular learning task.
+% For large conformer collections, reusing torsions can reduce repeated geometry preparation; a quantitative speed advantage requires timing equivalent workloads.
+% The curves report training behavior, and all treatments use encoded conformers.
+% Predictive performance on unseen data and any independent benefit of quantization remain untested.
+% Feature definitions, model settings, and the correspondence of all sixteen curves are given in the \SI{} (Section~\ref{sec:ml_settings}).
+
+\section{Conclusion}
+
+We have introduced a compact representation of molecular conformation based on a canonical set of bond, angle, and dihedral coordinates for a given ordering of atoms in a molecule.
+This choice of $Z$-matrix enables highly accurate encoding of distances, taking advantage of natural distributions of bond lengths to create a fixed-point encoding scheme for bonds in the standard covalent range.
+Non-covalently bound species are represented using graph-centroid approach for each fragment.
+A packed angle-dihedral encoding scheme enables a further 33\% compression while introducing controlled errors.
+This scheme is shown to yield acceptable reconstruction RMSD differences due to encoding and is shown to provide between 6$\times$ and 9$\times$ smaller molecular conformer databases while preserving reasonable energetic distributions.
+By including a simple Gaussian encoder-decoder model to represent bond angles and dihedrals and extra constraint coordinates, we are able to reduce changes in energy due to encoding to less than $\sim$1 kJ/mol on average.
+Rare changes remain on the order of $\sim$20 kJ/mol for systems with large rings to accumulate errors in angles not included in the Z-matrix or constraint set.
+
+This encoding strategy also provides a fast method for developing molecular similarity scores that combine connectivity and geometry information.
+Datasets that are encoded in this form lend themselves naturally to many geometric learning tasks, and a sample application to chiral classification is provided.
+
+This encoding strategy is applied in this work for SMILES databases, but can be used with any molecular representation that provides a unique atom order, like SELFIES or InChi.
+We have applied this to developing an InChi key for molecular conformations for internal database projects.
+When absolute conformation is required in Cartesian space, additional coordinates for displacement from the origin and Euler angles may be encoded in the same way.
+It should be noted that this representation is canonical for a given atom order, and so if a given pair of SELFIES and SMILES strings give the same order, they will produce the same conformer tag.
+This tag will differ for representations of the same molecule that give different atom orders.
+If controlled energies are less relevant than global conformation, standard bond lengths may be used to reduce the memory footprint of this encoding by 50\%, leading to potential compression of $\sim$20$\times$ relative to a naive Cartesian coordinate encoding.
+
+This encoding will enable more convenient sharing of conformer databases, as GEOM and PubChem3D.\cite{GEOM,Bolton2011:PubChem3D}
+The encoding supplied here may be used with other fingerprinting strategies that use internal coordinate information as well, allowing databases encoded in this form to plug into standard methods for fragment retrieval and diversity selection.\cite{SchulzGasch2012:TFD,Axen2017:3d-fingerprint,Schreyer2012:USRCAT,Quintana2022:md-fingerprints}
+Molecular language models provide another modern application space.\cite{Li2025Geo2Seq,Wang2025TokenMol}
+Further improvements in supplementary encoder-decoder models and coordinate constraints will be required before this scheme can be applied to databases where conformer energies differ by less than one kJ/mol.\cite{Roe2022:compression-energy,Eastman2023:SPICE}
+
+\section{Acknowledgments}
+D.P.T. acknowledges support from the U.S. National Science Foundation CAREER Award (CHE: 2339804) through the Chemical Theory, Models, and Computational Methods (CTMC) Program. Portions of this research were conducted with the advanced computing resources provided by Texas A\&M High Performance Research Computing. 
+% % Draft conclusion points for author validation before conversion to prose.
+% \begin{itemize}
+%     \item A conformer can be stored in the language of a ball-and-stick model: bond lengths, valence angles, and signed rotations about bonds, attached to a known molecular graph. This keeps the geometric information connected to the chemical structure it describes.
+
+%     \item The packed geometry occupies $4N-6$ bytes for $N\geq3$ stored atoms, less than one sixth of the $24N$-byte payload of 64-bit Cartesian coordinates. Across 747,974 pruned eMolecules conformers, its mean/maximum heavy-atom reconstruction RMSDs are $0.0319/0.1493$ \AA. Total archive savings, including graph and metadata costs, remain to be measured.
+
+%     \item Familiar chemical geometries provide a useful guide to allocating precision. At unchanged storage, the constrained angular model reduces mean all-atom GEOM reconstruction RMSD from $0.0339$ to $0.0272$ \AA, approximately $20\%$. The poorer performance of likelihood refitting shows why representing common geometries closely must be balanced against preserving uncommon ones.
+
+%     \item Better typical geometry also improves typical energy preservation: across three learned potentials, mean absolute reconstruction-energy changes decrease from about $2.6$ to $1.3$ kJ mol$^{-1}$. However, the largest total-energy changes increase and exceed $200$ kJ mol$^{-1}$. These single-point comparisons measure sensitivity to encoding; accuracy against electronic-structure calculations and preservation of conformer rankings remain untested.
+
+%     \item The annotation also makes local geometry available for substructure comparison and selective stereochemical features. The directional matching scores and R/S training curves demonstrate these uses, while retrieval quality, held-out prediction, and the independent effect of discretization still require validation. The current similarity results must be interpreted under the permissive matching rule documented in the \SI{}.
+
+%     \item Storing and exchanging conformer ensembles is the clearest immediate application. Further opportunities include conformer retrieval and diversity selection, ligand screening, and geometry-aware sequence models. Energy- and force-labeled datasets are another prospective use, provided decoded geometries remain consistent with their labels.
+
+%     \item Precision should be chosen for the intended chemical task. Bounds on stored coordinates do not bound every reconstructed bond, ring closure, or whole-molecule displacement. The present drug-like conformer tests therefore need extension to unseen chemistries and challenging geometries before broader accuracy claims are made.
+
+%     \item Useful extensions include precision that depends on the chemical environment, higher-resolution treatment of unusual geometries, and reconstruction anchors to limit accumulated error. Comparisons with existing conformer notations should measure complete storage cost and geometric fidelity on the same structures, while application tests should examine the properties or retrieval decisions that the compressed records must preserve.
+% \end{itemize}
+
+% Earlier reference-selection placeholder retained as an author note:
+% \section{Required Refs}
+% ...\cite{Quintana2022:md-fingerprints, Axen2017:3d-fingerprint,
+% Chen2024:md-clustering,
+% Aspuru-Guzik2015:graph-fingerprints,
+% Quintana2025:bitbirch,
+% DIMENEt,
+% Bechtel2026:omol-1k-md,
+% Coley2021:GeoMol,
+% Domenichini2023:ml-hessians,
+% Bolton2011:PubChem3D}
+
+
+\clearpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% References
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{bibliography/bibliography}
+
+\end{document}

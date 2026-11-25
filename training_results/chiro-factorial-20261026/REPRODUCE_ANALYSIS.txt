@@ -1,0 +1,24 @@
+Reproduce the independent numerical analysis locally:
+
+/usr/bin/arch -arm64 /Users/Mark/Documents/Postdoc/Development/.codex/envs/python3.11-codex/bin/python -B /Users/Mark/.codex/visualizations/2026/10/07/01a116e9-32de-7971-8009-3d72eb04c2d8/chiro-factorial-20261026/analyze_conditions.py
+
+The script uses Python's standard library only. It verifies every transported
+snapshot file against analysis/snapshots/snapshot-709d09ec5eb0812baed37c2b/files-sha256.json
+and requires the matching completed analysis/current.json pointer. The existing
+transport-verification.json records the independently verified remote hashes.
+
+Default outputs are independent-analysis.json, independent-analysis.txt, and
+independent-paired-effects.csv beside the script. To retain existing files,
+add --output NEW_OUTPUT_DIRECTORY. Input files, model code, jobs, and native
+packages are never modified. No accuracy-based condition exclusions occur.
+
+The script recomputes and checks all 432 published condition means and 3,888
+paired seed metric differences. Pairings fix all other factors. For design
+averages, it averages matched cells within each seed before calculating mean
+and sample SD across the same three seeds. Conformers and factorial cells
+are never counted as independent training replicates.
+
+analysis-reproduction-check.json records the ARM check: all 1,450 numeric
+fields match the original analysis exactly, and the TXT and CSV reproduce
+byte for byte. JSON notation for a few small floats differs between Python
+and JavaScript, with identical parsed values.
